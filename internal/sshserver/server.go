@@ -24,7 +24,14 @@ import (
 	"github.com/mrbc42/ssh-chat/internal/ui"
 )
 
-const maxConnsPerIP = 3
+// maxConnsPerIP caps concurrent sessions from a single source address, to
+// stop one misbehaving client from exhausting the server on this zero-auth,
+// open-to-anyone service. Deliberately generous rather than tight: anyone
+// behind NAT (an office, a household, or — as happened during development
+// — several test clients that all appear as one address through a podman
+// bridge) legitimately needs more than a couple of concurrent connections
+// from what the server sees as a single IP.
+const maxConnsPerIP = 10
 
 func New(addr, hostKeyPath string, st *store.Store, h *hub.Hub) (*ssh.Server, error) {
 	connLimiter := ratelimit.NewConnLimiter(maxConnsPerIP)
@@ -113,7 +120,13 @@ func teaHandler(st *store.Store, h *hub.Hub) bm.Handler {
 		// first Init() listener reads it.
 		h.Main().Join(chatSess)
 
-		return model, bm.MakeOptions(sess)
+		// WithReportFocus asks the terminal to send focus-in/focus-out
+		// events (DEC private mode 1004), which the UI uses to only beep
+		// when the window doesn't have focus. Terminals that don't support
+		// it simply never send these events; focus is then assumed true
+		// and the beep logic degrades to never firing, not misfiring.
+		opts := append(bm.MakeOptions(sess), tea.WithReportFocus())
+		return model, opts
 	}
 }
 

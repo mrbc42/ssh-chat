@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -38,6 +39,17 @@ type Model struct {
 	roomInfo hub.RoomInfo
 
 	width, height int
+
+	// focused tracks terminal focus (via DEC 1004 focus reporting, when the
+	// client terminal supports it); pendingBell rings the bell for exactly
+	// one render after an alert-worthy line arrives while unfocused.
+	focused     bool
+	pendingBell bool
+
+	// tab-completion cycling state for repeated Tab presses on an
+	// ambiguous command prefix; cleared on any other keypress.
+	tabMatches []string
+	tabIndex   int
 }
 
 func NewModel(ctx context.Context, h *hub.Hub, sess *hub.Session, renderer *lipgloss.Renderer, width, height int) Model {
@@ -71,6 +83,7 @@ func NewModel(ctx context.Context, h *hub.Hub, sess *hub.Session, renderer *lipg
 		textinput: ti,
 		width:     width,
 		height:    height,
+		focused:   true,
 	}
 }
 
@@ -118,6 +131,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		// Clear any pending bell here rather than via an immediate
+		// self-sent message: a zero-latency round-trip command races the
+		// (possibly frame-rate-throttled) renderer and can clear the flag
+		// before any frame is ever drawn with it set, silently swallowing
+		// the beep. Piggybacking on the 1-second tick guarantees at least
+		// one render sees it first.
+		m.pendingBell = false
 		return m, tickCmd()
 
 	case outboundMsg:
@@ -131,10 +151,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout()
 		} else if ob.Line != nil {
 			m.appendLine(*ob.Line)
+			if !m.focused && shouldBeep(*ob.Line, m.sess.Nick()) {
+				m.pendingBell = true
+			}
 		}
 		return m, waitForOutbox(m.sess)
 
+	case tea.FocusMsg:
+		m.focused = true
+		return m, nil
+
+	case tea.BlurMsg:
+		m.focused = false
+		return m, nil
+
 	case tea.KeyMsg:
+		if msg.String() != "tab" {
+			m.tabMatches = nil
+		}
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
@@ -143,6 +177,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "pgdown":
 			m.viewport.ViewDown()
+			return m, nil
+		case "tab":
+			m.completeCommand()
 			return m, nil
 		case "enter":
 			value := m.textinput.Value()
@@ -171,13 +208,85 @@ func (m Model) View() string {
 		StartedAt:   m.h.StartedAt(),
 	}, m.width, m.sty)
 
-	return lipgloss.JoinVertical(lipgloss.Left,
+	out := lipgloss.JoinVertical(lipgloss.Left,
 		banner,
 		m.viewport.View(),
 		"",
 		bar,
 		m.textinput.View(),
 	)
+	if m.pendingBell {
+		// A single BEL byte triggers whatever bell behavior the client
+		// terminal has configured (audible, visual flash, or nothing if
+		// disabled) — the most a server can do; it can't control how the
+		// client presents it.
+		return "\a" + out
+	}
+	return out
+}
+
+// shouldBeep reports whether an incoming line is alert-worthy enough to
+// ring the bell while the window is unfocused: other people's chat
+// messages, incoming PMs, and admin broadcasts — not your own echoed
+// messages, join/leave chatter, or command feedback.
+func shouldBeep(l hub.Line, myNick string) bool {
+	switch l.Kind {
+	case hub.KindChat:
+		return l.Sender != myNick
+	case hub.KindPM:
+		return l.Dir == "from"
+	case hub.KindAdmin:
+		return true
+	default:
+		return false
+	}
+}
+
+// completeCommand implements Tab completion for the slash-command name
+// only (up to the first space); repeated Tab presses on an ambiguous
+// prefix cycle through the matches. Cycle state (tabMatches/tabIndex) is
+// tracked independently of the input text — not re-derived from it each
+// press — since the input text itself changes as we complete, and
+// re-deriving a prefix from the now-completed text would misread it as a
+// fresh, unambiguous match and break the cycle after one step.
+func (m *Model) completeCommand() {
+	if len(m.tabMatches) > 0 {
+		m.tabIndex = (m.tabIndex + 1) % len(m.tabMatches)
+		m.setCompletion(m.tabMatches[m.tabIndex])
+		return
+	}
+
+	val := m.textinput.Value()
+	if !strings.HasPrefix(val, "/") || strings.Contains(val, " ") {
+		return
+	}
+	prefix := strings.ToLower(val[1:])
+	if prefix == "" {
+		return
+	}
+
+	var matches []string
+	for _, name := range hub.CommandNames() {
+		if strings.HasPrefix(name, prefix) {
+			matches = append(matches, name)
+		}
+	}
+	sort.Strings(matches)
+	if len(matches) == 0 {
+		return
+	}
+	m.tabMatches = matches
+	m.tabIndex = 0
+	m.setCompletion(matches[0])
+}
+
+func (m *Model) setCompletion(name string) {
+	val := "/" + name
+	if len(m.tabMatches) == 1 {
+		val += " "
+	}
+	m.textinput.SetValue(val)
+	m.textinput.CursorEnd()
 }
 
 // renderLines colorizes each logical Line by Kind/sender, word-wraps to

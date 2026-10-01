@@ -36,6 +36,17 @@ type Command struct {
 var registry = map[string]*Command{}
 var orderedNames []string
 
+// CommandNames returns every registered command name, including aliases,
+// sorted — used by the UI for slash-command tab completion.
+func CommandNames() []string {
+	names := make([]string, 0, len(registry))
+	for name := range registry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func register(c *Command) {
 	registry[c.Name] = c
 	orderedNames = append(orderedNames, c.Name)
@@ -624,7 +635,7 @@ func cmdBroadcast(c *CmdCtx, args []string) []string {
 	if msg == "" {
 		return []string{"Usage: /broadcast <message>"}
 	}
-	c.Hub.AdminBroadcast(fmt.Sprintf("[SERVER] %s", msg))
+	c.Hub.AdminBroadcast(fmt.Sprintf("[ADMIN] %s", msg))
 	return []string{"Broadcast sent to every channel."}
 }
 
