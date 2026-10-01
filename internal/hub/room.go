@@ -147,10 +147,10 @@ func (r *Room) handleJoin(ctx context.Context, sess *Session) {
 	// joiner's own "has joined" line doesn't show up duplicated in their
 	// own history replay.
 	msgs, err := r.store.RecentMessages(ctx, r.ID, scrollbackReplayLimit)
-	var lines []string
+	var lines []Line
 	if err == nil {
 		for _, m := range msgs {
-			lines = append(lines, renderMessage(m))
+			lines = append(lines, lineFromMessage(m))
 		}
 	}
 
@@ -165,7 +165,7 @@ func (r *Room) handleJoin(ctx context.Context, sess *Session) {
 	if r.announce {
 		text := fmt.Sprintf("*** %s has joined #%s ***", sess.Nick(), r.Name)
 		r.persistSystem(ctx, text)
-		r.broadcastExcept(sess, text)
+		r.broadcastExcept(sess, systemLine(text))
 	}
 }
 
@@ -177,16 +177,14 @@ func (r *Room) handlePart(ctx context.Context, sess *Session) {
 	if r.announce {
 		text := fmt.Sprintf("*** %s has left #%s ***", sess.Nick(), r.Name)
 		r.persistSystem(ctx, text)
-		r.broadcastExcept(sess, text)
+		r.broadcastExcept(sess, systemLine(text))
 	}
 }
 
 func (r *Room) handleChat(ctx context.Context, sess *Session, body string) {
 	m := store.Message{ChannelID: r.ID, SenderFP: sess.FP, SenderName: sess.Nick(), Body: body, Kind: "msg"}
 	_, _ = r.store.AppendMessage(ctx, m)
-	m.CreatedAt = time.Now()
-	line := renderMessage(m)
-	r.broadcastAll(line)
+	r.broadcastAll(chatLine(sess.Nick(), body))
 }
 
 func (r *Room) handleForceRemove(ctx context.Context, target *Session, broadcastText, targetText string) {
@@ -195,8 +193,8 @@ func (r *Room) handleForceRemove(ctx context.Context, target *Session, broadcast
 	}
 	delete(r.members, target)
 	r.persistSystem(ctx, broadcastText)
-	r.broadcastAll(broadcastText)
-	target.send(Outbound{Line: targetText})
+	r.broadcastAll(systemLine(broadcastText))
+	target.send(Outbound{Line: &Line{Time: time.Now(), Kind: KindError, Body: targetText}})
 
 	main := r.hub.Main()
 	if main != r {
@@ -208,36 +206,37 @@ func (r *Room) broadcastSystem(ctx context.Context, text string, persist bool) {
 	if persist {
 		r.persistSystem(ctx, text)
 	}
-	r.broadcastAll(text)
+	r.broadcastAll(systemLine(text))
 }
 
 func (r *Room) persistSystem(ctx context.Context, text string) {
 	_, _ = r.store.AppendMessage(ctx, store.Message{ChannelID: r.ID, SenderFP: "system", SenderName: "system", Body: text, Kind: "system"})
 }
 
-func (r *Room) broadcastAll(line string) {
+func (r *Room) broadcastAll(line Line) {
 	for sess := range r.members {
-		if !sess.send(Outbound{Line: line}) {
+		l := line
+		if !sess.send(Outbound{Line: &l}) {
 			r.hub.handleLaggingSession(sess)
 		}
 	}
 }
 
-func (r *Room) broadcastExcept(except *Session, line string) {
+func (r *Room) broadcastExcept(except *Session, line Line) {
 	for sess := range r.members {
 		if sess == except {
 			continue
 		}
-		if !sess.send(Outbound{Line: line}) {
+		l := line
+		if !sess.send(Outbound{Line: &l}) {
 			r.hub.handleLaggingSession(sess)
 		}
 	}
 }
 
-func renderMessage(m store.Message) string {
-	ts := m.CreatedAt.Format("15:04")
+func lineFromMessage(m store.Message) Line {
 	if m.Kind == "system" {
-		return fmt.Sprintf("[%s] %s", ts, m.Body)
+		return Line{Time: m.CreatedAt, Kind: KindSystem, Body: m.Body}
 	}
-	return fmt.Sprintf("[%s] %s: %s", ts, m.SenderName, m.Body)
+	return Line{Time: m.CreatedAt, Kind: KindChat, Sender: m.SenderName, Body: m.Body}
 }

@@ -1,19 +1,63 @@
 package hub
 
+import "time"
+
+// LineKind tags a Line so the UI can style it distinctly (nick color for
+// chat, red for errors, etc.) without the hub package knowing anything
+// about rendering.
+type LineKind string
+
+const (
+	KindChat   LineKind = "chat"   // a user's chat message (Sender set)
+	KindSystem LineKind = "system" // join/leave/kick/ban/lock/topic/op notices
+	KindError  LineKind = "error"  // command error / permission denial
+	KindInfo   LineKind = "info"   // help/list/who output, confirmations
+	KindAdmin  LineKind = "admin"  // delivered admin alert
+)
+
+// Line is one line of chat/system/command output, carrying enough
+// structure for the UI to render it in color without the hub package
+// needing to know about styling.
+type Line struct {
+	Time   time.Time
+	Kind   LineKind
+	Sender string // nickname; set only for KindChat
+	Body   string
+}
+
 // Outbound is a message delivered to a single session's UI (via Session.Outbox).
 type Outbound struct {
-	// Line is a pre-rendered line of text to append to the scrollback (chat,
-	// system, error, or help output).
-	Line string
+	// Line, when non-nil, is a line to append to the scrollback.
+	Line *Line
 
 	// SwitchRoom, when non-nil, tells the UI to clear its scrollback and
 	// switch to displaying this room (used on join/kick/forced-move).
 	SwitchRoom *RoomInfo
 	// Scrollback is the history replay to show after a SwitchRoom (oldest first).
-	Scrollback []string
+	Scrollback []Line
 
 	// Disconnect, when true, tells the UI to close the session.
 	Disconnect bool
+}
+
+func chatLine(sender, body string) Line {
+	return Line{Time: time.Now(), Kind: KindChat, Sender: sender, Body: body}
+}
+
+func systemLine(body string) Line {
+	return Line{Time: time.Now(), Kind: KindSystem, Body: body}
+}
+
+func infoLine(body string) Line {
+	return Line{Time: time.Now(), Kind: KindInfo, Body: body}
+}
+
+func errorLine(body string) Line {
+	return Line{Time: time.Now(), Kind: KindError, Body: body}
+}
+
+func adminLine(body string) Line {
+	return Line{Time: time.Now(), Kind: KindAdmin, Body: body}
 }
 
 // RoomInfo is a snapshot of a room's public state for status bar / UI use.

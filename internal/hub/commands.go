@@ -136,7 +136,8 @@ func HandleInput(ctx context.Context, h *Hub, sess *Session, line string) {
 
 func sendChat(ctx context.Context, h *Hub, sess *Session, body string) {
 	if !sess.Allow() {
-		sess.send(Outbound{Line: "You're sending messages too fast. Slow down."})
+		line := errorLine("You're sending messages too fast. Slow down.")
+		sess.send(Outbound{Line: &line})
 		return
 	}
 	if len(body) > maxMessageLen {
@@ -163,7 +164,7 @@ func Dispatch(ctx context.Context, h *Hub, sess *Session, line string) {
 
 	cmd, ok := registry[name]
 	if !ok {
-		sess.send(Outbound{Line: fmt.Sprintf("Unknown command /%s. Type /help for a list of commands.", name)})
+		sendError(sess, fmt.Sprintf("Unknown command /%s. Type /help for a list of commands.", name))
 		return
 	}
 
@@ -172,20 +173,20 @@ func Dispatch(ctx context.Context, h *Hub, sess *Session, line string) {
 	if cmd.NeedsOp || cmd.OwnerOnly {
 		room := sess.CurrentRoom()
 		if room == nil || room == h.Main() {
-			sess.send(Outbound{Line: "That command can't be used in #main."})
+			sendError(sess, "That command can't be used in #main.")
 			return
 		}
 		role, _, err := h.store.IsOwnerOrOp(ctx, room.ID, sess.FP)
 		if err != nil {
-			sess.send(Outbound{Line: "Internal error checking permissions."})
+			sendError(sess, "Internal error checking permissions.")
 			return
 		}
 		if cmd.OwnerOnly && role != store.RoleOwner {
-			sess.send(Outbound{Line: "Only the channel owner can do that."})
+			sendError(sess, "Only the channel owner can do that.")
 			return
 		}
 		if cmd.NeedsOp && role != store.RoleOwner && role != store.RoleOperator {
-			sess.send(Outbound{Line: "You must be an operator or the owner to do that."})
+			sendError(sess, "You must be an operator or the owner to do that.")
 			return
 		}
 	}
@@ -196,8 +197,14 @@ func Dispatch(ctx context.Context, h *Hub, sess *Session, line string) {
 	c2 := rest
 	lines := cmd.Fn(c, append(args, "\x00"+c2))
 	for _, l := range lines {
-		sess.send(Outbound{Line: l})
+		line := infoLine(l)
+		sess.send(Outbound{Line: &line})
 	}
+}
+
+func sendError(sess *Session, text string) {
+	line := errorLine(text)
+	sess.send(Outbound{Line: &line})
 }
 
 // restArg recovers the raw, unsplit remainder passed via the sentinel

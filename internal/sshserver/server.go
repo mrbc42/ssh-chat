@@ -5,9 +5,12 @@ package sshserver
 import (
 	"context"
 	"net"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	bm "github.com/charmbracelet/wish/bubbletea"
+	"github.com/muesli/termenv"
 
 	"github.com/charmbracelet/ssh"
 	"github.com/charmbracelet/wish"
@@ -102,7 +105,7 @@ func teaHandler(st *store.Store, h *hub.Hub) bm.Handler {
 			height = 24
 		}
 
-		renderer := bm.MakeRenderer(sess)
+		renderer := makeRenderer(sess)
 		model := ui.NewModel(ctx, h, chatSess, renderer, width, height)
 
 		// Join #main before the bubbletea program starts, so the session's
@@ -112,6 +115,44 @@ func teaHandler(st *store.Store, h *hub.Hub) bm.Handler {
 
 		return model, bm.MakeOptions(sess)
 	}
+}
+
+// makeRenderer builds a per-session lipgloss renderer from the client's
+// reported TERM/COLORTERM environment only.
+//
+// wish's own bm.MakeRenderer additionally probes the terminal interactively
+// (an OSC 11 "what's your background color?" query sent over the SSH
+// channel) to pick a light/dark theme automatically. That probe assumes a
+// real terminal emulator sits on the other end to answer it; a client that
+// doesn't (a raw/scripted client, some minimal SSH clients, certain
+// terminal multiplexer configurations) leaves the read hanging, which stops
+// the whole session from rendering anything until the connection is torn
+// down. We build the renderer ourselves from environment data alone — the
+// BBS theme is always dark regardless, so there is nothing to probe for.
+func makeRenderer(sess ssh.Session) *lipgloss.Renderer {
+	pty, _, ok := sess.Pty()
+	if !ok || pty.Term == "" || pty.Term == "dumb" {
+		r := lipgloss.NewRenderer(sess, termenv.WithProfile(termenv.Ascii))
+		r.SetHasDarkBackground(true)
+		return r
+	}
+	env := sshEnviron(append(sess.Environ(), "TERM="+pty.Term))
+	r := lipgloss.NewRenderer(sess, termenv.WithEnvironment(env), termenv.WithUnsafe(), termenv.WithColorCache(true))
+	r.SetHasDarkBackground(true)
+	return r
+}
+
+type sshEnviron []string
+
+func (e sshEnviron) Environ() []string { return e }
+
+func (e sshEnviron) Getenv(key string) string {
+	for _, v := range e {
+		if rest, ok := strings.CutPrefix(v, key+"="); ok {
+			return rest
+		}
+	}
+	return ""
 }
 
 func remoteIP(sess ssh.Session) string {

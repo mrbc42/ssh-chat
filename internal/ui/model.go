@@ -2,9 +2,11 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
@@ -15,6 +17,8 @@ import (
 
 const minUsableWidth = 20
 const minUsableHeight = 6
+const bannerText = "S S H - C H A T   B B S"
+const fixedRows = 3 // banner + status bar + input line
 
 type outboundMsg struct{ ob hub.Outbound }
 type tickMsg time.Time
@@ -30,27 +34,39 @@ type Model struct {
 	viewport  viewport.Model
 	textinput textinput.Model
 
-	lines    []string
+	lines    []hub.Line
 	roomInfo hub.RoomInfo
 
 	width, height int
 }
 
 func NewModel(ctx context.Context, h *hub.Hub, sess *hub.Session, renderer *lipgloss.Renderer, width, height int) Model {
+	sty := newStyles(renderer)
+
 	ti := textinput.New()
 	ti.Placeholder = "Type a message, or /help for commands..."
-	ti.Focus()
 	ti.CharLimit = 600
 	ti.Prompt = "> "
+	// Focus here, at construction, not in Init(): Init has a value receiver
+	// and cannot mutate the Model the tea.Program actually holds, so a
+	// Focus() call made there is silently lost and every keystroke gets
+	// dropped by textinput's own "not focused" guard.
+	ti.Focus()
+	ti.PromptStyle = sty.InputPrompt
+	// A visibly blinking block cursor, old-terminal style: reversed bright
+	// green so it reads clearly against the dark background.
+	ti.Cursor.Style = renderer.NewStyle().Foreground(lipgloss.Color("#5fff5f")).Reverse(true)
+	ti.Cursor.TextStyle = renderer.NewStyle().Foreground(lipgloss.Color("#e4e4e4"))
+	ti.Cursor.SetMode(cursor.CursorBlink)
 
-	vp := viewport.New(width, max(height-3, 1))
+	vp := viewport.New(width, max(height-fixedRows, 1))
 
 	return Model{
 		ctx:       ctx,
 		h:         h,
 		sess:      sess,
 		renderer:  renderer,
-		sty:       newStyles(renderer),
+		sty:       sty,
 		viewport:  vp,
 		textinput: ti,
 		width:     width,
@@ -78,18 +94,18 @@ func (m Model) Init() tea.Cmd {
 
 func (m *Model) layout() {
 	m.viewport.Width = m.width
-	m.viewport.Height = max(m.height-3, 1)
+	m.viewport.Height = max(m.height-fixedRows, 1)
 	m.textinput.Width = max(m.width-2, 1)
-	m.viewport.SetContent(renderLines(m.lines, m.sty))
+	m.viewport.SetContent(renderLines(m.lines, m.sty, m.viewport.Width, m.viewport.Height))
 	m.viewport.GotoBottom()
 }
 
-func (m *Model) appendLine(line string) {
+func (m *Model) appendLine(line hub.Line) {
 	m.lines = append(m.lines, line)
 	if len(m.lines) > 2000 {
 		m.lines = m.lines[len(m.lines)-2000:]
 	}
-	m.viewport.SetContent(renderLines(m.lines, m.sty))
+	m.viewport.SetContent(renderLines(m.lines, m.sty, m.viewport.Width, m.viewport.Height))
 	m.viewport.GotoBottom()
 }
 
@@ -111,11 +127,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if ob.SwitchRoom != nil {
 			m.roomInfo = *ob.SwitchRoom
-			m.lines = nil
-			m.lines = append(m.lines, ob.Scrollback...)
+			m.lines = append([]hub.Line{}, ob.Scrollback...)
 			m.layout()
-		} else if ob.Line != "" {
-			m.appendLine(ob.Line)
+		} else if ob.Line != nil {
+			m.appendLine(*ob.Line)
 		}
 		return m, waitForOutbox(m.sess)
 
@@ -148,6 +163,7 @@ func (m Model) View() string {
 	if m.width < minUsableWidth || m.height < minUsableHeight {
 		return m.sty.TooNarrow.Render("Terminal too small. Please resize your window.")
 	}
+	banner := m.sty.Banner.Width(m.width).Align(lipgloss.Center).Render(bannerText)
 	bar := renderStatusBar(statusBarState{
 		Now:         time.Now(),
 		Room:        m.roomInfo,
@@ -156,20 +172,46 @@ func (m Model) View() string {
 	}, m.width, m.sty)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
+		banner,
 		m.viewport.View(),
 		bar,
 		m.textinput.View(),
 	)
 }
 
-func renderLines(lines []string, sty styles) string {
-	rendered := make([]string, len(lines))
-	for i, l := range lines {
-		if strings.Contains(l, "***") {
-			rendered[i] = sty.SystemLine.Render(l)
-		} else {
-			rendered[i] = l
+// renderLines colorizes each logical Line by Kind/sender, word-wraps to
+// width, and pads blank rows at the TOP so the conversation stays anchored
+// to the bottom of the pane and grows upward as new lines arrive — like an
+// old BBS chat window — instead of starting at the top with empty space
+// below.
+func renderLines(lines []hub.Line, sty styles, width, height int) string {
+	var rows []string
+	for _, l := range lines {
+		rendered := renderOneLine(l, sty)
+		if width > 0 {
+			rendered = sty.renderer.NewStyle().Width(width).Render(rendered)
 		}
+		rows = append(rows, strings.Split(rendered, "\n")...)
 	}
-	return strings.Join(rendered, "\n")
+	if pad := height - len(rows); pad > 0 {
+		rows = append(make([]string, pad), rows...)
+	}
+	return strings.Join(rows, "\n")
+}
+
+func renderOneLine(l hub.Line, sty styles) string {
+	ts := sty.Timestamp.Render("[" + l.Time.Format("15:04") + "]")
+	switch l.Kind {
+	case hub.KindChat:
+		nick := sty.NickStyle(l.Sender).Render(l.Sender)
+		return fmt.Sprintf("%s %s: %s", ts, nick, sty.ChatBody.Render(l.Body))
+	case hub.KindSystem:
+		return ts + " " + sty.SystemLine.Render(l.Body)
+	case hub.KindError:
+		return ts + " " + sty.ErrorLine.Render(l.Body)
+	case hub.KindAdmin:
+		return ts + " " + sty.AdminLine.Render(l.Body)
+	default: // KindInfo
+		return ts + " " + sty.InfoLine.Render(l.Body)
+	}
 }

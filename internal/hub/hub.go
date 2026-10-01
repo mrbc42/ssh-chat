@@ -123,7 +123,8 @@ func (h *Hub) NotifyAdmins(text string) bool {
 		respond := make(chan []*Session, 1)
 		r.Send(evFindAdmins{adminFPs: h.adminFPs, respond: respond})
 		for _, sess := range <-respond {
-			if sess.send(Outbound{Line: text}) {
+			line := adminLine(text)
+			if sess.send(Outbound{Line: &line}) {
 				delivered = true
 			}
 		}
