@@ -1,0 +1,75 @@
+# ssh-chat local/testing stack.
+#
+# Run every command from INSIDE this directory, with no -f flag:
+#
+#   cd deploy
+#   podman-compose up -d --build
+#
+# .env in this directory pins COMPOSE_PROJECT_NAME=ssh-chat. Without it,
+# podman-compose names the pod/network after this directory's basename
+# ("deploy"), which collides with any other project whose deploy directory
+# is also just called "deploy" (inkwell, compliance-lms) — confirmed this
+# can make podman-compose try to tear down an unrelated, already-running
+# pod on `up`. Always run from inside this directory so the .env is found.
+#
+# podman-compose 1.3.0 throws FileNotFoundError on a relative -f path and
+# resolves .env from the invoking directory, so running it from anywhere else
+# silently loses every variable below.
+#
+# Connect with:
+#   ssh -p ${CHAT_PORT:-2222} <any-host>
+#
+# Update procedure:
+#   git -C .. pull && podman-compose up -d --build
+#
+# Reboot survival needs both of these, once, as the service user:
+#   loginctl enable-linger $USER
+#   systemctl --user enable --now podman-restart.service
+
+services:
+  chat:
+    build:
+      context: ..
+      dockerfile: Containerfile
+      args:
+        VERSION: ${CHAT_VERSION:-dev}
+    image: localhost/ssh-chat:latest
+    container_name: ssh-chat
+
+    # `always`, never `unless-stopped`. Podman's packaged podman-restart.service
+    # runs `podman start --all --filter restart-policy=always`, which matches
+    # zero containers under `unless-stopped` and fails silently — the stack
+    # simply does not come back after a reboot, with nothing in the logs.
+    restart: always
+
+    # Bound to every interface by default, since this is meant to be reached
+    # directly over ssh (no reverse proxy sits in front of an SSH protocol
+    # server). Set CHAT_BIND_IP to restrict it to one interface if needed.
+    ports:
+      - "${CHAT_BIND_IP:-0.0.0.0}:${CHAT_PORT:-2222}:2222"
+
+    environment:
+      TZ: ${TZ:-UTC}
+
+    volumes:
+      - chat-data:/data
+
+    healthcheck:
+      # busybox's nc (bundled in alpine) in port-probe mode: confirms the SSH
+      # listener is accepting TCP connections. It can't do a full SSH
+      # handshake without a client, so this is reachability, not a protocol
+      # check — enough for a liveness probe.
+      test: ["CMD", "nc", "-z", "127.0.0.1", "2222"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # No depends_on at all: SQLite runs in-process, so this stack has no
+    # inter-service dependencies — sidesteps the podman 5.4.2 bug where
+    # podman-compose 1.3.0 can't start containers with 2+ hop depends_on
+    # chains. Keep it that way: if a future service is added (e.g. a backup
+    # sidecar), point it at exactly one dependency, never a chain.
+
+volumes:
+  chat-data:
