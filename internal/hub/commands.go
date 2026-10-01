@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mrbc42/ssh-chat/internal/store"
@@ -133,7 +134,7 @@ func init() {
 		Fn: cmdBroadcast,
 	})
 	register(&Command{
-		Name: "roll", Usage: "/roll", Help: "Roll a six-sided die.",
+		Name: "roll", Usage: "/roll [sides]", Help: "Roll a die; defaults to 6 sides, up to 100.",
 		Fn: cmdRoll,
 	})
 	register(&Command{
@@ -639,13 +640,24 @@ func cmdBroadcast(c *CmdCtx, args []string) []string {
 	return []string{"Broadcast sent to every channel."}
 }
 
-func cmdRoll(c *CmdCtx, _ []string) []string {
-	n := randRange(1, 6)
+const maxDiceSides = 100
+
+func cmdRoll(c *CmdCtx, args []string) []string {
+	pos := posArgs(args)
+	sides := 6
+	if len(pos) >= 1 {
+		n, err := strconv.Atoi(pos[0])
+		if err != nil || n < 2 || n > maxDiceSides {
+			return []string{fmt.Sprintf("Usage: /roll [sides] — sides must be a number from 2 to %d.", maxDiceSides)}
+		}
+		sides = n
+	}
+	n := randRange(1, sides)
 	room := c.Sess.CurrentRoom()
 	if room == nil {
 		room = c.Hub.Main()
 	}
-	room.Send(evSystem{text: fmt.Sprintf("*** %s rolled a %d (1-6) ***", c.Sess.Nick(), n), persist: true})
+	room.Send(evSystem{text: fmt.Sprintf("*** %s rolled a %d (1-%d) ***", c.Sess.Nick(), n, sides), persist: true})
 	return nil
 }
 
