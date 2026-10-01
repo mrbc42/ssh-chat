@@ -25,6 +25,24 @@
 # Reboot survival needs both of these, once, as the service user:
 #   loginctl enable-linger $USER
 #   systemctl --user enable --now podman-restart.service
+#
+# SSH HOST KEY — do not remove the chat-data volume during development.
+# The host key lives at /data/hostkey inside that volume and is generated
+# once on first start; removing the volume (`podman volume rm
+# ssh-chat_chat-data`) deletes it along with the database, forcing a new
+# key on next start and breaking every client's host-key trust ("WARNING:
+# REMOTE HOST IDENTIFICATION HAS CHANGED"). `up --build`, `restart`, and
+# ordinary image rebuilds never touch the volume and are always safe.
+#
+# A copy of the current key is kept at deploy/hostkey-backup/ (gitignored —
+# it is a private key, never commit it). If the volume is ever recreated,
+# restore it BEFORE anyone connects:
+#   podman cp hostkey-backup/hostkey     ssh-chat:/data/hostkey
+#   podman cp hostkey-backup/hostkey.pub ssh-chat:/data/hostkey.pub
+#   podman-compose restart
+# If the key is ever intentionally rotated instead, refresh the backup:
+#   podman cp ssh-chat:/data/hostkey     hostkey-backup/hostkey
+#   podman cp ssh-chat:/data/hostkey.pub hostkey-backup/hostkey.pub
 
 services:
   chat:

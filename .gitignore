@@ -3,3 +3,6 @@
 *.db-wal
 *.db-shm
 /ssh-chat
+
+# Never commit the SSH host private key, backed up or not.
+/deploy/hostkey-backup/
