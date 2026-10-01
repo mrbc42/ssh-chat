@@ -68,6 +68,20 @@ func (r *Room) Part(sess *Session) {
 	r.Send(evPart{sess: sess})
 }
 
+// PartSwitching enqueues sess to leave this room specifically because
+// they're switching into another channel (used only for leaving #main),
+// producing a "has joined another channel" announcement instead of the
+// generic "has left" one.
+func (r *Room) PartSwitching(sess *Session) {
+	r.Send(evPart{sess: sess, reason: partReasonSwitch})
+}
+
+// PartDisconnect enqueues sess to leave this room because their whole SSH
+// session ended, producing a "has logged off" announcement.
+func (r *Room) PartDisconnect(sess *Session) {
+	r.Send(evPart{sess: sess, reason: partReasonDisconnect})
+}
+
 func (r *Room) Who() []string {
 	respond := make(chan []string, 1)
 	r.Send(evWho{respond: respond})
@@ -81,7 +95,7 @@ func (r *Room) run() {
 		case evJoin:
 			r.handleJoin(ctx, e.sess)
 		case evPart:
-			r.handlePart(ctx, e.sess)
+			r.handlePart(ctx, e.sess, e.reason)
 		case evChat:
 			r.handleChat(ctx, e.sess, e.body)
 		case evSystem:
@@ -138,6 +152,9 @@ func (r *Room) run() {
 				}
 			}
 			e.respond <- found
+		case evAdminAnnounce:
+			r.persistAdmin(ctx, e.text)
+			r.broadcastAll(adminLine(e.text))
 		}
 	}
 }
@@ -169,16 +186,25 @@ func (r *Room) handleJoin(ctx context.Context, sess *Session) {
 	}
 }
 
-func (r *Room) handlePart(ctx context.Context, sess *Session) {
+func (r *Room) handlePart(ctx context.Context, sess *Session, reason partReason) {
 	if _, ok := r.members[sess]; !ok {
 		return
 	}
 	delete(r.members, sess)
-	if r.announce {
-		text := fmt.Sprintf("*** %s has left #%s ***", sess.Nick(), r.Name)
-		r.persistSystem(ctx, text)
-		r.broadcastExcept(sess, systemLine(text))
+	if !r.announce {
+		return
 	}
+	var text string
+	switch reason {
+	case partReasonSwitch:
+		text = fmt.Sprintf("*** %s has joined another channel ***", sess.Nick())
+	case partReasonDisconnect:
+		text = fmt.Sprintf("*** %s has logged off ***", sess.Nick())
+	default:
+		text = fmt.Sprintf("*** %s has left #%s ***", sess.Nick(), r.Name)
+	}
+	r.persistSystem(ctx, text)
+	r.broadcastExcept(sess, systemLine(text))
 }
 
 func (r *Room) handleChat(ctx context.Context, sess *Session, body string) {
@@ -213,6 +239,10 @@ func (r *Room) persistSystem(ctx context.Context, text string) {
 	_, _ = r.store.AppendMessage(ctx, store.Message{ChannelID: r.ID, SenderFP: "system", SenderName: "system", Body: text, Kind: "system"})
 }
 
+func (r *Room) persistAdmin(ctx context.Context, text string) {
+	_, _ = r.store.AppendMessage(ctx, store.Message{ChannelID: r.ID, SenderFP: "admin", SenderName: "admin", Body: text, Kind: "admin"})
+}
+
 func (r *Room) broadcastAll(line Line) {
 	for sess := range r.members {
 		l := line
@@ -235,8 +265,12 @@ func (r *Room) broadcastExcept(except *Session, line Line) {
 }
 
 func lineFromMessage(m store.Message) Line {
-	if m.Kind == "system" {
+	switch m.Kind {
+	case "system":
 		return Line{Time: m.CreatedAt, Kind: KindSystem, Body: m.Body}
+	case "admin":
+		return Line{Time: m.CreatedAt, Kind: KindAdmin, Body: m.Body}
+	default:
+		return Line{Time: m.CreatedAt, Kind: KindChat, Sender: m.SenderName, Body: m.Body}
 	}
-	return Line{Time: m.CreatedAt, Kind: KindChat, Sender: m.SenderName, Body: m.Body}
 }

@@ -9,8 +9,8 @@ import (
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/mrbc42/ssh-chat/internal/hub"
 )
@@ -18,7 +18,7 @@ import (
 const minUsableWidth = 20
 const minUsableHeight = 6
 const bannerText = "S S H - C H A T   B B S"
-const fixedRows = 3 // banner + status bar + input line
+const fixedRows = 4 // banner + blank separator + status bar + input line
 
 type outboundMsg struct{ ob hub.Outbound }
 type tickMsg time.Time
@@ -174,6 +174,7 @@ func (m Model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		banner,
 		m.viewport.View(),
+		"",
 		bar,
 		m.textinput.View(),
 	)
@@ -211,6 +212,14 @@ func renderOneLine(l hub.Line, sty styles) string {
 		return ts + " " + sty.ErrorLine.Render(l.Body)
 	case hub.KindAdmin:
 		return ts + " " + sty.AdminLine.Render(l.Body)
+	case hub.KindPM:
+		arrow := "from"
+		if l.Dir == "to" {
+			arrow = "to"
+		}
+		nick := sty.NickStyle(l.Sender).Render(l.Sender)
+		prefix := sty.PMLine.Render(fmt.Sprintf("[PM %s", arrow)) + " " + nick + sty.PMLine.Render("]")
+		return fmt.Sprintf("%s %s %s", ts, prefix, sty.ChatBody.Render(l.Body))
 	default: // KindInfo
 		return ts + " " + sty.InfoLine.Render(l.Body)
 	}

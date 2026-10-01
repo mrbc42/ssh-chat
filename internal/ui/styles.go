@@ -38,6 +38,7 @@ type styles struct {
 	InfoLine    lipgloss.Style
 	SystemLine  lipgloss.Style
 	AdminLine   lipgloss.Style
+	PMLine      lipgloss.Style
 	TooNarrow   lipgloss.Style
 
 	renderer *lipgloss.Renderer
@@ -54,6 +55,7 @@ func newStyles(r *lipgloss.Renderer) styles {
 		InfoLine:    r.NewStyle().Foreground(lipgloss.Color("#00d7ff")),
 		SystemLine:  r.NewStyle().Foreground(lipgloss.Color("#ffd700")).Italic(true),
 		AdminLine:   r.NewStyle().Foreground(lipgloss.Color("#ff5fd7")).Bold(true).Reverse(true),
+		PMLine:      r.NewStyle().Foreground(lipgloss.Color("#af87ff")).Bold(true),
 		TooNarrow:   r.NewStyle().Foreground(lipgloss.Color("#ff5f5f")).Bold(true),
 		renderer:    r,
 	}

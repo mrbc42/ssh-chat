@@ -68,7 +68,7 @@ func disconnectMiddleware() wish.Middleware {
 			next(sess)
 			if chatSess, ok := sess.Context().Value(sessionCtxKey{}).(*hub.Session); ok {
 				if room := chatSess.CurrentRoom(); room != nil {
-					room.Part(chatSess)
+					room.PartDisconnect(chatSess)
 				}
 			}
 		}

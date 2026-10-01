@@ -90,19 +90,39 @@ func (h *Hub) ListChannels(ctx context.Context) ([]ChannelSummary, error) {
 	return out, nil
 }
 
-func (h *Hub) TotalUsersOnline() int {
+// loadedRooms returns every room with a resident actor (i.e. has had at
+// least one member since the server started) as a snapshot slice, safe to
+// iterate without holding the lock.
+func (h *Hub) loadedRooms() []*Room {
 	h.mu.RLock()
+	defer h.mu.RUnlock()
 	rooms := make([]*Room, 0, len(h.rooms))
 	for _, r := range h.rooms {
 		rooms = append(rooms, r)
 	}
-	h.mu.RUnlock()
+	return rooms
+}
 
+func (h *Hub) TotalUsersOnline() int {
 	total := 0
-	for _, r := range rooms {
+	for _, r := range h.loadedRooms() {
 		total += r.Info().Members
 	}
 	return total
+}
+
+// FindSessionByNick looks up a currently-connected session by nickname
+// (case-insensitive), searching every loaded room — used for /msg, which
+// must work regardless of which room the sender and recipient are each in.
+func (h *Hub) FindSessionByNick(nick string) *Session {
+	for _, r := range h.loadedRooms() {
+		respond := make(chan []*Session, 1)
+		r.Send(evFindMember{nick: nick, respond: respond})
+		if found := <-respond; len(found) > 0 {
+			return found[0]
+		}
+	}
+	return nil
 }
 
 // NotifyAdmins delivers text to every currently-connected admin session
@@ -111,15 +131,8 @@ func (h *Hub) NotifyAdmins(text string) bool {
 	if len(h.adminFPs) == 0 {
 		return false
 	}
-	h.mu.RLock()
-	rooms := make([]*Room, 0, len(h.rooms))
-	for _, r := range h.rooms {
-		rooms = append(rooms, r)
-	}
-	h.mu.RUnlock()
-
 	delivered := false
-	for _, r := range rooms {
+	for _, r := range h.loadedRooms() {
 		respond := make(chan []*Session, 1)
 		r.Send(evFindAdmins{adminFPs: h.adminFPs, respond: respond})
 		for _, sess := range <-respond {
@@ -135,15 +148,17 @@ func (h *Hub) NotifyAdmins(text string) bool {
 // BroadcastAll sends an ephemeral (non-persisted) system line to every
 // currently resident room, e.g. for a server-shutdown notice.
 func (h *Hub) BroadcastAll(text string) {
-	h.mu.RLock()
-	rooms := make([]*Room, 0, len(h.rooms))
-	for _, r := range h.rooms {
-		rooms = append(rooms, r)
-	}
-	h.mu.RUnlock()
-
-	for _, r := range rooms {
+	for _, r := range h.loadedRooms() {
 		r.Send(evSystem{text: text, persist: false})
+	}
+}
+
+// AdminBroadcast sends a persisted, distinctly-styled announcement (e.g.
+// "server going down for maintenance") to every currently resident channel.
+// Authorization (IsAdmin) is checked by the caller.
+func (h *Hub) AdminBroadcast(text string) {
+	for _, r := range h.loadedRooms() {
+		r.Send(evAdminAnnounce{text: text})
 	}
 }
 

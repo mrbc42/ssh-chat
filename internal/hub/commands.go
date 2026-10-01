@@ -114,6 +114,18 @@ func init() {
 		Fn: cmdAdmin,
 	})
 	register(&Command{
+		Name: "msg", Aliases: []string{"pm", "whisper", "w"}, Usage: "/msg <user> <message>", Help: "Send a private message to a user, anywhere on the server.",
+		Fn: cmdMsg,
+	})
+	register(&Command{
+		Name: "broadcast", Usage: "/broadcast <message>", Help: "(admin) Announce a message to every channel, e.g. for maintenance.",
+		Fn: cmdBroadcast,
+	})
+	register(&Command{
+		Name: "roll", Usage: "/roll", Help: "Roll a six-sided die.",
+		Fn: cmdRoll,
+	})
+	register(&Command{
 		Name: "quit", Aliases: []string{"exit"}, Usage: "/quit", Help: "Disconnect.",
 		Fn: cmdQuit,
 	})
@@ -350,7 +362,14 @@ func joinByName(c *CmdCtx, name string, justCreated bool) []string {
 	oldRoom := c.Sess.CurrentRoom()
 	newRoom := c.Hub.GetOrLoadRoom(c.ctx, ch)
 	if oldRoom != nil && oldRoom != newRoom {
-		oldRoom.Send(evPart{sess: c.Sess})
+		if oldRoom == c.Hub.Main() {
+			// Leaving #main specifically to go to another channel gets its
+			// own wording ("has joined another channel") rather than the
+			// generic "has left #main".
+			oldRoom.PartSwitching(c.Sess)
+		} else {
+			oldRoom.Part(c.Sess)
+		}
 	}
 	if oldRoom != newRoom {
 		newRoom.Send(evJoin{sess: c.Sess})
@@ -566,6 +585,57 @@ func cmdAdmin(c *CmdCtx, args []string) []string {
 		return []string{"Your report has been sent to an administrator."}
 	}
 	return []string{"No administrator is currently online; your report has been logged."}
+}
+
+func cmdMsg(c *CmdCtx, args []string) []string {
+	pos := posArgs(args)
+	if len(pos) < 1 {
+		return []string{"Usage: /msg <user> <message>"}
+	}
+	target := pos[0]
+	msg := strings.TrimSpace(strings.TrimPrefix(restArg(args), target))
+	if msg == "" {
+		return []string{"Usage: /msg <user> <message>"}
+	}
+	if strings.EqualFold(target, c.Sess.Nick()) {
+		return []string{"You can't message yourself."}
+	}
+	targetSess := c.Hub.FindSessionByNick(target)
+	if targetSess == nil {
+		return []string{fmt.Sprintf("No such user %q is currently online.", target)}
+	}
+	if len(msg) > maxMessageLen {
+		msg = msg[:maxMessageLen]
+	}
+
+	inLine := pmLine(c.Sess.Nick(), "from", msg)
+	targetSess.send(Outbound{Line: &inLine})
+
+	outLine := pmLine(targetSess.Nick(), "to", msg)
+	c.Sess.send(Outbound{Line: &outLine})
+	return nil
+}
+
+func cmdBroadcast(c *CmdCtx, args []string) []string {
+	if !c.Hub.IsAdmin(c.Sess.FP) {
+		return []string{"Only a server administrator can do that."}
+	}
+	msg := restArg(args)
+	if msg == "" {
+		return []string{"Usage: /broadcast <message>"}
+	}
+	c.Hub.AdminBroadcast(fmt.Sprintf("[SERVER] %s", msg))
+	return []string{"Broadcast sent to every channel."}
+}
+
+func cmdRoll(c *CmdCtx, _ []string) []string {
+	n := randRange(1, 6)
+	room := c.Sess.CurrentRoom()
+	if room == nil {
+		room = c.Hub.Main()
+	}
+	room.Send(evSystem{text: fmt.Sprintf("*** %s rolled a %d (1-6) ***", c.Sess.Nick(), n), persist: true})
+	return nil
 }
 
 func cmdQuit(c *CmdCtx, _ []string) []string {

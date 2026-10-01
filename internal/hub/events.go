@@ -12,7 +12,8 @@ const (
 	KindSystem LineKind = "system" // join/leave/kick/ban/lock/topic/op notices
 	KindError  LineKind = "error"  // command error / permission denial
 	KindInfo   LineKind = "info"   // help/list/who output, confirmations
-	KindAdmin  LineKind = "admin"  // delivered admin alert
+	KindAdmin  LineKind = "admin"  // delivered admin alert / server broadcast
+	KindPM     LineKind = "pm"     // private message (Sender + Dir set)
 )
 
 // Line is one line of chat/system/command output, carrying enough
@@ -21,8 +22,9 @@ const (
 type Line struct {
 	Time   time.Time
 	Kind   LineKind
-	Sender string // nickname; set only for KindChat
+	Sender string // nickname; set for KindChat and KindPM
 	Body   string
+	Dir    string // KindPM only: "to" or "from" (the other party named in Sender)
 }
 
 // Outbound is a message delivered to a single session's UI (via Session.Outbox).
@@ -60,6 +62,10 @@ func adminLine(body string) Line {
 	return Line{Time: time.Now(), Kind: KindAdmin, Body: body}
 }
 
+func pmLine(otherNick, dir, body string) Line {
+	return Line{Time: time.Now(), Kind: KindPM, Sender: otherNick, Dir: dir, Body: body}
+}
+
 // RoomInfo is a snapshot of a room's public state for status bar / UI use.
 type RoomInfo struct {
 	Name     string
@@ -73,7 +79,21 @@ type RoomInfo struct {
 type roomEvent interface{ isRoomEvent() }
 
 type evJoin struct{ sess *Session }
-type evPart struct{ sess *Session }
+
+// partReason distinguishes why a session is leaving a room, so the
+// announcement wording matches what actually happened.
+type partReason string
+
+const (
+	partReasonLeave      partReason = ""           // plain /leave or being replaced into another room
+	partReasonSwitch     partReason = "switch"     // left #main specifically to join another channel
+	partReasonDisconnect partReason = "disconnect" // the whole SSH session ended
+)
+
+type evPart struct {
+	sess   *Session
+	reason partReason
+}
 type evChat struct {
 	sess *Session
 	body string
@@ -109,16 +129,18 @@ type evFindAdmins struct {
 	adminFPs map[string]bool
 	respond  chan []*Session
 }
+type evAdminAnnounce struct{ text string }
 
-func (evJoin) isRoomEvent()        {}
-func (evPart) isRoomEvent()        {}
-func (evChat) isRoomEvent()        {}
-func (evSystem) isRoomEvent()      {}
-func (evForceRemove) isRoomEvent() {}
-func (evSetLocked) isRoomEvent()   {}
-func (evSetAnnounce) isRoomEvent() {}
-func (evSetTopic) isRoomEvent()    {}
-func (evWho) isRoomEvent()         {}
-func (evSnapshot) isRoomEvent()    {}
-func (evFindMember) isRoomEvent()  {}
-func (evFindAdmins) isRoomEvent()  {}
+func (evJoin) isRoomEvent()          {}
+func (evPart) isRoomEvent()          {}
+func (evChat) isRoomEvent()          {}
+func (evSystem) isRoomEvent()        {}
+func (evForceRemove) isRoomEvent()   {}
+func (evSetLocked) isRoomEvent()     {}
+func (evSetAnnounce) isRoomEvent()   {}
+func (evSetTopic) isRoomEvent()      {}
+func (evWho) isRoomEvent()           {}
+func (evSnapshot) isRoomEvent()      {}
+func (evFindMember) isRoomEvent()    {}
+func (evFindAdmins) isRoomEvent()    {}
+func (evAdminAnnounce) isRoomEvent() {}
