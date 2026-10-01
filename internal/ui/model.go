@@ -138,6 +138,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the beep. Piggybacking on the 1-second tick guarantees at least
 		// one render sees it first.
 		m.pendingBell = false
+		m.h.CheckIdle(m.sess)
 		return m, tickCmd()
 
 	case outboundMsg:

@@ -2,12 +2,17 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/mrbc42/ssh-chat/internal/store"
 )
+
+// AfkThreshold is how long a session can go without submitting a chat
+// message or command before it's automatically marked away.
+const AfkThreshold = 5 * time.Minute
 
 type Hub struct {
 	store     *store.Store
@@ -160,6 +165,22 @@ func (h *Hub) AdminBroadcast(text string) {
 	for _, r := range h.loadedRooms() {
 		r.Send(evAdminAnnounce{text: text})
 	}
+}
+
+// CheckIdle marks sess away, announcing it in whatever room they're
+// currently in, if they've gone AfkThreshold without submitting a chat
+// message or command. Intended to be polled periodically (the UI's
+// once-a-second tick) rather than driven by a dedicated timer per session.
+func (h *Hub) CheckIdle(sess *Session) {
+	if sess.IsAfk() || sess.IdleFor() < AfkThreshold {
+		return
+	}
+	sess.SetAfk(true)
+	room := sess.CurrentRoom()
+	if room == nil {
+		room = h.Main()
+	}
+	room.Send(evSystem{text: fmt.Sprintf("*** %s is away ***", sess.Nick()), persist: true})
 }
 
 // handleLaggingSession is called when a non-blocking send to a session's

@@ -142,6 +142,10 @@ func init() {
 		Fn: cmdFlip,
 	})
 	register(&Command{
+		Name: "afk", Usage: "/afk", Help: "Mark yourself away; cleared automatically on your next message.",
+		Fn: cmdAfk,
+	})
+	register(&Command{
 		Name: "quit", Aliases: []string{"exit"}, Usage: "/quit", Help: "Disconnect.",
 		Fn: cmdQuit,
 	})
@@ -155,6 +159,20 @@ func HandleInput(ctx context.Context, h *Hub, sess *Session, line string) {
 	if line == "" {
 		return
 	}
+
+	// Any submitted line counts as activity and clears away status —
+	// except /afk itself, which sets it right back; without this
+	// exception, going away while already away would announce "no longer
+	// away" immediately followed by "is away" for the same keystroke.
+	isAfkCmd := strings.EqualFold(strings.TrimSpace(line), "/afk")
+	if wasAfk := sess.Touch(); wasAfk && !isAfkCmd {
+		room := sess.CurrentRoom()
+		if room == nil {
+			room = h.Main()
+		}
+		room.Send(evSystem{text: fmt.Sprintf("*** %s is no longer away ***", sess.Nick()), persist: true})
+	}
+
 	if !strings.HasPrefix(line, "/") {
 		sendChat(ctx, h, sess, line)
 		return
@@ -675,6 +693,20 @@ func cmdFlip(c *CmdCtx, _ []string) []string {
 		room = c.Hub.Main()
 	}
 	room.Send(evSystem{text: fmt.Sprintf("*** %s flipped a coin: %s ***", c.Sess.Nick(), side), persist: true})
+	return nil
+}
+
+func cmdAfk(c *CmdCtx, _ []string) []string {
+	// HandleInput's Touch() already cleared any prior away status before
+	// dispatching here (and suppressed its own "no longer away"
+	// announcement for this exact command), so this always marks away
+	// fresh — no branching on prior state needed.
+	c.Sess.SetAfk(true)
+	room := c.Sess.CurrentRoom()
+	if room == nil {
+		room = c.Hub.Main()
+	}
+	room.Send(evSystem{text: fmt.Sprintf("*** %s is away ***", c.Sess.Nick()), persist: true})
 	return nil
 }
 

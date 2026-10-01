@@ -13,21 +13,24 @@ type Session struct {
 
 	Outbox chan Outbound
 
-	mu          sync.Mutex
-	nick        string
-	currentRoom *Room
+	mu           sync.Mutex
+	nick         string
+	currentRoom  *Room
+	afk          bool
+	lastActivity time.Time
 
 	limiter *tokenBucket
 }
 
 func NewSession(fp, ip, nick string) *Session {
 	return &Session{
-		FP:          fp,
-		IP:          ip,
-		ConnectedAt: time.Now(),
-		Outbox:      make(chan Outbound, 64),
-		nick:        nick,
-		limiter:     newTokenBucket(10, 5), // burst 10, refill 5/sec
+		FP:           fp,
+		IP:           ip,
+		ConnectedAt:  time.Now(),
+		Outbox:       make(chan Outbound, 64),
+		nick:         nick,
+		lastActivity: time.Now(),
+		limiter:      newTokenBucket(10, 5), // burst 10, refill 5/sec
 	}
 }
 
@@ -53,6 +56,42 @@ func (s *Session) setCurrentRoom(r *Room) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.currentRoom = r
+}
+
+// Touch records activity (a submitted chat message or command), clearing
+// any away status and resetting the idle clock. It reports whether the
+// session was away immediately before this call, so the caller can decide
+// whether to announce a return.
+func (s *Session) Touch() (wasAfk bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	wasAfk = s.afk
+	s.afk = false
+	s.lastActivity = time.Now()
+	return wasAfk
+}
+
+func (s *Session) IsAfk() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.afk
+}
+
+// SetAfk sets away status directly, without touching the idle clock
+// (going away due to idleness or /afk shouldn't reset it; coming back
+// does, via Touch, not this).
+func (s *Session) SetAfk(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.afk = v
+}
+
+// IdleFor returns how long it's been since the session last submitted a
+// chat message or command.
+func (s *Session) IdleFor() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return time.Since(s.lastActivity)
 }
 
 // Allow reports whether the session is within its chat-flood budget.
