@@ -138,6 +138,10 @@ func init() {
 		Fn: cmdRoll,
 	})
 	register(&Command{
+		Name: "flip", Usage: "/flip", Help: "Flip a coin: heads or tails.",
+		Fn: cmdFlip,
+	})
+	register(&Command{
 		Name: "quit", Aliases: []string{"exit"}, Usage: "/quit", Help: "Disconnect.",
 		Fn: cmdQuit,
 	})
@@ -658,6 +662,19 @@ func cmdRoll(c *CmdCtx, args []string) []string {
 		room = c.Hub.Main()
 	}
 	room.Send(evSystem{text: fmt.Sprintf("*** %s rolled a %d (1-%d) ***", c.Sess.Nick(), n, sides), persist: true})
+	return nil
+}
+
+func cmdFlip(c *CmdCtx, _ []string) []string {
+	side := "heads"
+	if randRange(0, 1) == 1 {
+		side = "tails"
+	}
+	room := c.Sess.CurrentRoom()
+	if room == nil {
+		room = c.Hub.Main()
+	}
+	room.Send(evSystem{text: fmt.Sprintf("*** %s flipped a coin: %s ***", c.Sess.Nick(), side), persist: true})
 	return nil
 }
 
