@@ -2,11 +2,13 @@ package hub
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/mrbc42/ssh-chat/internal/filter"
 	"github.com/mrbc42/ssh-chat/internal/store"
 )
 
@@ -18,6 +20,8 @@ type Hub struct {
 	store     *store.Store
 	startedAt time.Time
 	adminFPs  map[string]bool
+	afkAfter  time.Duration
+	filter    *filter.Filter
 
 	mu    sync.RWMutex
 	rooms map[string]*Room // keyed by lowercased channel name
@@ -30,6 +34,7 @@ func NewHub(st *store.Store, adminFPs map[string]bool) (*Hub, error) {
 		store:     st,
 		startedAt: time.Now(),
 		adminFPs:  adminFPs,
+		afkAfter:  AfkThreshold,
 		rooms:     make(map[string]*Room),
 	}
 	ch, err := st.GetOrCreateMainChannel(context.Background())
@@ -40,6 +45,18 @@ func NewHub(st *store.Store, adminFPs map[string]bool) (*Hub, error) {
 	h.rooms[strings.ToLower(ch.Name)] = h.main
 	return h, nil
 }
+
+// SetAfkThreshold overrides how long a session may idle before being marked
+// away. Call before serving connections.
+func (h *Hub) SetAfkThreshold(d time.Duration) {
+	if d > 0 {
+		h.afkAfter = d
+	}
+}
+
+// SetFilter installs a word filter applied to chat, actions and PMs. Call
+// before serving connections; nil disables filtering.
+func (h *Hub) SetFilter(f *filter.Filter) { h.filter = f }
 
 func (h *Hub) Main() *Room { return h.main }
 
@@ -172,7 +189,7 @@ func (h *Hub) AdminBroadcast(text string) {
 // message or command. Intended to be polled periodically (the UI's
 // once-a-second tick) rather than driven by a dedicated timer per session.
 func (h *Hub) CheckIdle(sess *Session) {
-	if sess.IsAfk() || sess.IdleFor() < AfkThreshold {
+	if sess.IsAfk() || sess.IdleFor() < h.afkAfter {
 		return
 	}
 	sess.SetAfk(true)
@@ -182,6 +199,94 @@ func (h *Hub) CheckIdle(sess *Session) {
 	}
 	room.Send(evSystem{text: fmt.Sprintf("*** %s is away ***", sess.Nick()), persist: true})
 }
+
+// NickAvailable reports whether sess may use nick: no other online session
+// has it, and no other keyed identity has persisted it.
+func (h *Hub) NickAvailable(ctx context.Context, nick string, sess *Session) bool {
+	if other := h.FindSessionByNick(nick); other != nil && other != sess {
+		return false
+	}
+	taken, err := h.store.NicknameTaken(ctx, nick, sess.FP)
+	return err == nil && !taken
+}
+
+// ResolveInitialNick picks the nickname for a new connection: the identity's
+// saved one, else its deterministic default (with a numeric suffix if that is
+// taken). Only keyed identities are persisted.
+func (h *Hub) ResolveInitialNick(ctx context.Context, fp string) string {
+	keyed := !strings.HasPrefix(fp, "anon-")
+	if keyed {
+		if nick, known, err := h.store.ResolveNickname(ctx, fp); err == nil && known {
+			return nick
+		}
+	}
+	base := DefaultNickFor(fp)
+	nick := base
+	probe := &Session{FP: fp}
+	for i := 2; !h.NickAvailable(ctx, nick, probe) && i < 1000; i++ {
+		nick = fmt.Sprintf("%s%d", base, i)
+	}
+	if keyed {
+		_ = h.store.SetNickname(ctx, fp, nick)
+	}
+	return nick
+}
+
+// RecordDisconnect stamps a keyed identity's last-seen time.
+func (h *Hub) RecordDisconnect(sess *Session) {
+	if !strings.HasPrefix(sess.FP, "anon-") {
+		_ = h.store.TouchIdentity(context.Background(), sess.FP)
+	}
+}
+
+// DeleteRoom force-deletes a non-main channel: members are moved to #main and
+// the channel, its messages, operators and bans are removed.
+func (h *Hub) DeleteRoom(ctx context.Context, name string) error {
+	ch, ok, err := h.store.GetChannelByName(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return store.ErrChannelNotFound
+	}
+	if ch.IsMain {
+		return errors.New("the main lobby cannot be deleted")
+	}
+	key := strings.ToLower(ch.Name)
+	h.mu.Lock()
+	r := h.rooms[key]
+	delete(h.rooms, key)
+	h.mu.Unlock()
+	if r != nil {
+		done := make(chan struct{})
+		r.Send(evShutdown{done: done})
+		<-done
+	}
+	return h.store.DeleteChannel(ctx, ch.ID)
+}
+
+// ExpireRooms deletes empty channels with no activity for olderThan and
+// returns their names. Rooms with anyone in them are never expired.
+func (h *Hub) ExpireRooms(ctx context.Context, olderThan time.Duration) ([]string, error) {
+	stale, err := h.store.StaleChannels(ctx, time.Now().Add(-olderThan))
+	if err != nil {
+		return nil, err
+	}
+	var gone []string
+	for _, ch := range stale {
+		if r, ok := h.GetLoadedRoom(ch.Name); ok && r.Info().Members > 0 {
+			continue
+		}
+		if err := h.DeleteRoom(ctx, ch.Name); err != nil {
+			return gone, err
+		}
+		gone = append(gone, ch.Name)
+	}
+	return gone, nil
+}
+
+// mask applies the configured word filter.
+func (h *Hub) mask(s string) string { return h.filter.Mask(s) }
 
 // handleLaggingSession is called when a non-blocking send to a session's
 // outbox fails (buffer full). We don't force-disconnect on the first drop

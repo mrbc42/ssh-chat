@@ -98,6 +98,18 @@ func (r *Room) run() {
 			r.handlePart(ctx, e.sess, e.reason)
 		case evChat:
 			r.handleChat(ctx, e.sess, e.body)
+		case evShutdown:
+			r.handleShutdown(e.done)
+			// Late senders that still hold a reference must not block
+			// forever on a dead actor; drain briefly, then let it go.
+			deadline := time.After(time.Minute)
+			for {
+				select {
+				case <-r.events:
+				case <-deadline:
+					return
+				}
+			}
 		case evAction:
 			r.handleAction(ctx, e.sess, e.body)
 		case evSystem:
@@ -220,6 +232,19 @@ func (r *Room) handleChat(ctx context.Context, sess *Session, body string) {
 	m := store.Message{ChannelID: r.ID, SenderFP: sess.FP, SenderName: sess.Nick(), Body: body, Kind: "msg"}
 	_, _ = r.store.AppendMessage(ctx, m)
 	r.broadcastAll(chatLine(sess.Nick(), body))
+}
+
+// handleShutdown evicts every member into #main with an explanation; the
+// room is already unregistered from the hub by the caller.
+func (r *Room) handleShutdown(done chan struct{}) {
+	for sess := range r.members {
+		line := infoLine(fmt.Sprintf("#%s was deleted. Moving you to #main.", r.Name))
+		sess.send(Outbound{Line: &line})
+		delete(r.members, sess)
+		sess.setCurrentRoom(nil)
+		r.hub.Main().Join(sess)
+	}
+	close(done)
 }
 
 func (r *Room) handleAction(ctx context.Context, sess *Session, body string) {

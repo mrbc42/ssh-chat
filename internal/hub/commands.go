@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -167,6 +168,30 @@ func init() {
 		Fn: cmdClear,
 	})
 	register(&Command{
+		Name: "seen", Usage: "/seen <user>", Help: "Show whether a user is online, or when they were last seen.",
+		Fn: cmdSeen,
+	})
+	register(&Command{
+		Name: "gban", Usage: "/gban <user> [reason]", Help: "(admin) Ban a user from the whole server (by key and IP) and disconnect them.",
+		Fn: cmdGban,
+	})
+	register(&Command{
+		Name: "gunban", Usage: "/gunban <fingerprint|ip>", Help: "(admin) Lift a server-wide ban; see /gbans for the entries.",
+		Fn: cmdGunban,
+	})
+	register(&Command{
+		Name: "gbans", Usage: "/gbans", Help: "(admin) List server-wide bans.",
+		Fn: cmdGbans,
+	})
+	register(&Command{
+		Name: "delroom", Usage: "/delroom <channel>", Help: "(admin) Delete a channel; anyone inside is moved to #main.",
+		Fn: cmdDelroom,
+	})
+	register(&Command{
+		Name: "adminlog", Usage: "/adminlog [count]", Help: "(admin) Show recent /admin reports (default 10, max 50).",
+		Fn: cmdAdminLog,
+	})
+	register(&Command{
 		Name: "quit", Aliases: []string{"exit"}, Usage: "/quit", Help: "Disconnect.",
 		Fn: cmdQuit,
 	})
@@ -214,7 +239,7 @@ func sendChat(ctx context.Context, h *Hub, sess *Session, body string) {
 	if room == nil {
 		room = h.Main()
 	}
-	room.Send(evChat{sess: sess, body: body})
+	room.Send(evChat{sess: sess, body: h.mask(body)})
 }
 
 func Dispatch(ctx context.Context, h *Hub, sess *Session, line string) {
@@ -316,9 +341,17 @@ func cmdNick(c *CmdCtx, args []string) []string {
 		return []string{"Nicknames must be 2-24 characters: letters, numbers, dash, underscore."}
 	}
 	old := c.Sess.Nick()
+	if old == nick {
+		return []string{"That is already your nickname."}
+	}
+	if !c.Hub.NickAvailable(c.ctx, nick, c.Sess) {
+		return []string{fmt.Sprintf("The nickname %q is already taken.", nick)}
+	}
 	c.Sess.SetNick(nick)
-	if err := c.Store.SetNickname(c.ctx, c.Sess.FP, nick); err != nil {
-		return []string{"Failed to save nickname (it will reset next connection)."}
+	if !strings.HasPrefix(c.Sess.FP, "anon-") {
+		if err := c.Store.SetNickname(c.ctx, c.Sess.FP, nick); err != nil {
+			return []string{"Failed to save nickname (it will reset next connection)."}
+		}
 	}
 	if room := c.Sess.CurrentRoom(); room != nil {
 		room.Send(evSystem{text: fmt.Sprintf("*** %s is now known as %s ***", old, nick), persist: true})
@@ -662,6 +695,7 @@ func cmdMsg(c *CmdCtx, args []string) []string {
 	if len(msg) > maxMessageLen {
 		msg = msg[:maxMessageLen]
 	}
+	msg = c.Hub.mask(msg)
 
 	// An ignoring recipient silently drops the PM; the sender still sees
 	// their own copy so they aren't tipped off.
@@ -755,23 +789,12 @@ func cmdMe(c *CmdCtx, args []string) []string {
 	if room == nil {
 		room = c.Hub.Main()
 	}
-	room.Send(evAction{sess: c.Sess, body: body})
+	room.Send(evAction{sess: c.Sess, body: c.Hub.mask(body)})
 	return nil
 }
 
 func cmdTime(c *CmdCtx, _ []string) []string {
-	d := time.Since(c.Sess.ConnectedAt).Round(time.Second)
-	h, m, s := int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60
-	var out string
-	switch {
-	case h > 0:
-		out = fmt.Sprintf("%dh %dm %ds", h, m, s)
-	case m > 0:
-		out = fmt.Sprintf("%dm %ds", m, s)
-	default:
-		out = fmt.Sprintf("%ds", s)
-	}
-	return []string{fmt.Sprintf("You have been online for %s.", out)}
+	return []string{fmt.Sprintf("You have been online for %s.", humanDuration(time.Since(c.Sess.ConnectedAt)))}
 }
 
 func cmdIgnore(c *CmdCtx, args []string) []string {
@@ -805,4 +828,199 @@ func cmdUnignore(c *CmdCtx, args []string) []string {
 func cmdClear(c *CmdCtx, _ []string) []string {
 	c.Sess.send(Outbound{Clear: true})
 	return nil
+}
+
+// humanDuration renders d like "2h 5m 9s", omitting leading zero units.
+func humanDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	h, m, s := int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60
+	switch {
+	case h >= 24:
+		return fmt.Sprintf("%dd %dh %dm", h/24, h%24, m)
+	case h > 0:
+		return fmt.Sprintf("%dh %dm %ds", h, m, s)
+	case m > 0:
+		return fmt.Sprintf("%dm %ds", m, s)
+	default:
+		return fmt.Sprintf("%ds", s)
+	}
+}
+
+func requireAdmin(c *CmdCtx) []string {
+	if !c.Hub.IsAdmin(c.Sess.FP) {
+		return []string{"Only a server administrator can do that."}
+	}
+	return nil
+}
+
+func cmdSeen(c *CmdCtx, args []string) []string {
+	pos := posArgs(args)
+	if len(pos) != 1 {
+		return []string{"Usage: /seen <user>"}
+	}
+	nick := pos[0]
+	if t := c.Hub.FindSessionByNick(nick); t != nil {
+		msg := fmt.Sprintf("%s is online now (connected %s", t.Nick(), humanDuration(time.Since(t.ConnectedAt)))
+		if t.IsAfk() {
+			msg += ", away"
+		} else if idle := t.IdleFor(); idle >= time.Minute {
+			msg += ", idle " + humanDuration(idle)
+		}
+		return []string{msg + ")."}
+	}
+	at, ok, err := c.Store.LastSeenByNickname(c.ctx, nick)
+	if err != nil {
+		return []string{"Internal error looking up that user."}
+	}
+	if !ok {
+		return []string{fmt.Sprintf("No record of %q.", nick)}
+	}
+	return []string{fmt.Sprintf("%s was last seen %s ago (%s).", nick, humanDuration(time.Since(at)), at.Format("2006-01-02 15:04"))}
+}
+
+func cmdGban(c *CmdCtx, args []string) []string {
+	if msg := requireAdmin(c); msg != nil {
+		return msg
+	}
+	pos := posArgs(args)
+	if len(pos) < 1 {
+		return []string{"Usage: /gban <user> [reason]"}
+	}
+	nick := pos[0]
+	reason := strings.TrimSpace(strings.TrimPrefix(restArg(args), nick))
+
+	var fp, ip string
+	target := c.Hub.FindSessionByNick(nick)
+	if target != nil {
+		if target == c.Sess || c.Hub.IsAdmin(target.FP) {
+			return []string{"You can't ban an administrator (or yourself)."}
+		}
+		fp, ip = target.FP, target.IP
+	} else {
+		var ok bool
+		var err error
+		fp, ok, err = c.Store.FindFingerprintByNickname(c.ctx, nick)
+		if err != nil || !ok || strings.HasPrefix(fp, "anon-") {
+			return []string{fmt.Sprintf("No such user %q (only keyed users can be banned while offline).", nick)}
+		}
+		if c.Hub.IsAdmin(fp) {
+			return []string{"You can't ban an administrator."}
+		}
+	}
+	// A keyless connection's fingerprint is random per connection, so only
+	// its IP is worth banning.
+	if strings.HasPrefix(fp, "anon-") {
+		fp = ""
+	}
+	if fp == "" && ip == "" {
+		return []string{"Nothing to ban: no key or address known for that user."}
+	}
+	if err := c.Store.AddGlobalBan(c.ctx, fp, ip, c.Sess.Nick(), reason); err != nil {
+		return []string{"Failed to add ban."}
+	}
+	if target != nil {
+		line := errorLine("You have been banned from this server.")
+		target.send(Outbound{Line: &line})
+		target.send(Outbound{Disconnect: true})
+	}
+	return []string{fmt.Sprintf("%s banned server-wide (key %s, address %s). Lift with /gunban.", nick, orDash(fp), orDash(ip))}
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+func cmdGunban(c *CmdCtx, args []string) []string {
+	if msg := requireAdmin(c); msg != nil {
+		return msg
+	}
+	pos := posArgs(args)
+	if len(pos) != 1 {
+		return []string{"Usage: /gunban <fingerprint|ip>  (see /gbans)"}
+	}
+	key := pos[0]
+	n, err := c.Store.RemoveGlobalBans(c.ctx, key)
+	if err != nil {
+		return []string{"Failed to lift ban."}
+	}
+	if n == 0 {
+		// Allow a nickname too, resolved to its key.
+		if fp, ok, _ := c.Store.FindFingerprintByNickname(c.ctx, key); ok {
+			n, _ = c.Store.RemoveGlobalBans(c.ctx, fp)
+		}
+	}
+	if n == 0 {
+		return []string{fmt.Sprintf("No server-wide ban matches %q.", key)}
+	}
+	return []string{fmt.Sprintf("Lifted %d server-wide ban(s) for %s.", n, key)}
+}
+
+func cmdGbans(c *CmdCtx, _ []string) []string {
+	if msg := requireAdmin(c); msg != nil {
+		return msg
+	}
+	bans, err := c.Store.ListGlobalBans(c.ctx)
+	if err != nil {
+		return []string{"Internal error listing bans."}
+	}
+	if len(bans) == 0 {
+		return []string{"No server-wide bans."}
+	}
+	lines := []string{"Server-wide bans:"}
+	for _, b := range bans {
+		lines = append(lines, fmt.Sprintf("  %s key=%s ip=%s by %s %s", b.CreatedAt.Format("2006-01-02"), orDash(b.FP), orDash(b.IP), b.BannedBy, b.Reason))
+	}
+	return lines
+}
+
+func cmdDelroom(c *CmdCtx, args []string) []string {
+	if msg := requireAdmin(c); msg != nil {
+		return msg
+	}
+	pos := posArgs(args)
+	if len(pos) != 1 {
+		return []string{"Usage: /delroom <channel>"}
+	}
+	name := strings.TrimPrefix(pos[0], "#")
+	switch err := c.Hub.DeleteRoom(c.ctx, name); {
+	case err == nil:
+		return []string{fmt.Sprintf("Deleted #%s.", name)}
+	case errors.Is(err, store.ErrChannelNotFound):
+		return []string{fmt.Sprintf("No such channel #%s.", name)}
+	default:
+		return []string{err.Error()}
+	}
+}
+
+func cmdAdminLog(c *CmdCtx, args []string) []string {
+	if msg := requireAdmin(c); msg != nil {
+		return msg
+	}
+	n := 10
+	if pos := posArgs(args); len(pos) >= 1 {
+		v, err := strconv.Atoi(pos[0])
+		if err != nil || v < 1 || v > 50 {
+			return []string{"Usage: /adminlog [count] — count from 1 to 50."}
+		}
+		n = v
+	}
+	alerts, err := c.Store.RecentAdminAlerts(c.ctx, n)
+	if err != nil {
+		return []string{"Internal error reading the admin log."}
+	}
+	if len(alerts) == 0 {
+		return []string{"No admin reports logged."}
+	}
+	lines := []string{fmt.Sprintf("Last %d admin report(s), newest first:", len(alerts))}
+	for _, a := range alerts {
+		seen := "unseen"
+		if a.Delivered {
+			seen = "delivered live"
+		}
+		lines = append(lines, fmt.Sprintf("  %s %s in #%s (%s): %s", a.CreatedAt.Format("01-02 15:04"), a.ReporterNick, a.ChannelName, seen, a.Message))
+	}
+	return lines
 }

@@ -147,3 +147,46 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+
+// DeleteChannel removes a non-main channel and everything attached to it.
+func (s *Store) DeleteChannel(ctx context.Context, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM messages WHERE channel_id = ?`,
+		`DELETE FROM operators WHERE channel_id = ?`,
+		`DELETE FROM bans WHERE channel_id = ?`,
+		`DELETE FROM channels WHERE id = ? AND is_main = 0`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// StaleChannels lists non-main channels whose latest message (or creation,
+// if they have none) is older than cutoff.
+func (s *Store) StaleChannels(ctx context.Context, cutoff time.Time) ([]Channel, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+channelCols+` FROM channels
+		 WHERE is_main = 0
+		   AND COALESCE((SELECT MAX(created_at) FROM messages WHERE channel_id = channels.id), created_at) < ?`,
+		cutoff.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Channel
+	for rows.Next() {
+		c, err := scanChannel(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}

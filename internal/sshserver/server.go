@@ -51,11 +51,14 @@ func New(addr, hostKeyPath string, st *store.Store, h *hub.Hub) (*ssh.Server, er
 			// Innermost: runs after the bubbletea Program.Run() returns (on
 			// EOF/disconnect/quit), so the session is parted from whatever
 			// room it was last in instead of lingering as a ghost member.
-			disconnectMiddleware(),
+			disconnectMiddleware(h),
 			bm.Middleware(teaHandler(st, h)),
 			activeterm.Middleware(),
 			logging.Middleware(),
 			ratelimit.Middleware(connLimiter),
+			// Outermost (middlewares run last-to-first): refuse globally
+			// banned keys/addresses before anything else touches them.
+			globalBanMiddleware(st),
 		),
 	)
 	if err != nil {
@@ -64,12 +67,31 @@ func New(addr, hostKeyPath string, st *store.Store, h *hub.Hub) (*ssh.Server, er
 	return s, nil
 }
 
+// globalBanMiddleware turns away connections whose key or address has a
+// server-wide ban (see /gban).
+func globalBanMiddleware(st *store.Store) wish.Middleware {
+	return func(next ssh.Handler) ssh.Handler {
+		return func(sess ssh.Session) {
+			var fp string
+			if pk := sess.PublicKey(); pk != nil {
+				fp = gossh.FingerprintSHA256(pk)
+			}
+			if banned, err := st.IsGloballyBanned(context.Background(), fp, remoteIP(sess)); err == nil && banned {
+				wish.Println(sess, "You are banned from this server.")
+				_ = sess.Exit(1)
+				return
+			}
+			next(sess)
+		}
+	}
+}
+
 type sessionCtxKey struct{}
 
 // disconnectMiddleware parts the chat session (stashed in the ssh.Context by
 // teaHandler) from its current room once the bubbletea program for this
 // connection has finished, whatever the reason (EOF, /quit, kick).
-func disconnectMiddleware() wish.Middleware {
+func disconnectMiddleware(h *hub.Hub) wish.Middleware {
 	return func(next ssh.Handler) ssh.Handler {
 		return func(sess ssh.Session) {
 			next(sess)
@@ -77,6 +99,7 @@ func disconnectMiddleware() wish.Middleware {
 				if room := chatSess.CurrentRoom(); room != nil {
 					room.PartDisconnect(chatSess)
 				}
+				h.RecordDisconnect(chatSess)
 			}
 		}
 	}
@@ -94,11 +117,7 @@ func teaHandler(st *store.Store, h *hub.Hub) bm.Handler {
 		}
 		ip := remoteIP(sess)
 
-		nick, known, err := st.ResolveNickname(ctx, fp)
-		if err != nil || !known {
-			nick = hub.DefaultNickFor(fp)
-			_ = st.SetNickname(ctx, fp, nick)
-		}
+		nick := h.ResolveInitialNick(ctx, fp)
 
 		chatSess := hub.NewSession(fp, ip, nick)
 		sess.Context().SetValue(sessionCtxKey{}, chatSess)

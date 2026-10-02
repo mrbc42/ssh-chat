@@ -1,0 +1,218 @@
+package hub
+
+import (
+	"context"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mrbc42/ssh-chat/internal/filter"
+	"github.com/mrbc42/ssh-chat/internal/store"
+)
+
+func adminHub(t *testing.T) (*Hub, *store.Store) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHub(st, map[string]bool{"SHA256:admin": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h, st
+}
+
+// info runs a command and returns the first info/error line it produced.
+func info(t *testing.T, h *Hub, s *Session, cmd string) string {
+	t.Helper()
+	drain(s)
+	HandleInput(context.Background(), h, s, cmd)
+	for {
+		select {
+		case o := <-s.Outbox:
+			if o.Line != nil && (o.Line.Kind == KindInfo || o.Line.Kind == KindError) {
+				return o.Line.Body
+			}
+		case <-time.After(500 * time.Millisecond):
+			return "" // command succeeded silently
+		}
+	}
+}
+
+func TestNickUniqueness(t *testing.T) {
+	h, _ := adminHub(t)
+	ctx := context.Background()
+	a := NewSession("SHA256:aaa", "1.1.1.1", h.ResolveInitialNick(ctx, "SHA256:aaa"))
+	h.Main().Join(a)
+	if got := info(t, h, a, "/nick taken"); strings.Contains(got, "taken") {
+		t.Fatalf("first claim refused: %s", got)
+	}
+	b := NewSession("SHA256:bbb", "2.2.2.2", "bee")
+	h.Main().Join(b)
+	if got := info(t, h, b, "/nick TAKEN"); !strings.Contains(got, "already taken") {
+		t.Fatalf("duplicate allowed (case-insensitive): %s", got)
+	}
+	// An offline keyed user's persisted nick is still reserved.
+	a2 := NewSession("SHA256:ccc", "3.3.3.3", "c")
+	h.Main().Join(a2)
+	_ = info(t, h, a2, "/nick reserved")
+	a2.send(Outbound{Disconnect: true})
+	h.Main().Send(evPart{sess: a2})
+	time.Sleep(100 * time.Millisecond)
+	if got := info(t, h, b, "/nick reserved"); !strings.Contains(got, "already taken") {
+		t.Fatalf("persisted nick not reserved: %s", got)
+	}
+	// Default-nick collisions get a suffix instead of duplicating.
+	n1 := h.ResolveInitialNick(ctx, "SHA256:zzz")
+	d := NewSession("SHA256:zzz", "4.4.4.4", n1)
+	h.Main().Join(d)
+	_ = h.store.SetNickname(ctx, "SHA256:yyy", DefaultNickFor("SHA256:zzz"))
+	if n2 := h.ResolveInitialNick(ctx, "SHA256:zzz"); n2 != n1 {
+		t.Fatalf("known identity should keep its nick: %s vs %s", n2, n1)
+	}
+}
+
+func TestGlobalBanAndAdminOnly(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	troll := NewSession("SHA256:troll", "6.6.6.6", "troll")
+	h.Main().Join(admin)
+	h.Main().Join(troll)
+
+	if got := info(t, h, troll, "/gban boss"); !strings.Contains(got, "Only a server administrator") {
+		t.Fatalf("non-admin gban: %s", got)
+	}
+	if got := info(t, h, admin, "/gban boss"); !strings.Contains(got, "can't ban an administrator") {
+		t.Fatalf("admin self-ban: %s", got)
+	}
+	if got := info(t, h, admin, "/gban troll being rude"); !strings.Contains(got, "banned server-wide") {
+		t.Fatalf("gban: %s", got)
+	}
+	banned, _ := st.IsGloballyBanned(ctx, "SHA256:troll", "")
+	byIP, _ := st.IsGloballyBanned(ctx, "SHA256:other", "6.6.6.6")
+	if !banned || !byIP {
+		t.Fatalf("ban not recorded for key/ip: %v %v", banned, byIP)
+	}
+	if got := info(t, h, admin, "/gbans"); !strings.Contains(got, "Server-wide bans") {
+		t.Fatalf("gbans: %s", got)
+	}
+	if got := info(t, h, admin, "/gunban SHA256:troll"); !strings.Contains(got, "Lifted") {
+		t.Fatalf("gunban: %s", got)
+	}
+	if banned, _ := st.IsGloballyBanned(ctx, "SHA256:troll", "6.6.6.6"); banned {
+		t.Fatal("still banned after /gunban")
+	}
+
+	// Keyless target: only the address is banned.
+	anon := NewSession("anon-1234abcd", "7.7.7.7", "ghost")
+	h.Main().Join(anon)
+	_ = info(t, h, admin, "/gban ghost")
+	if b, _ := st.IsGloballyBanned(ctx, "anon-1234abcd", ""); b {
+		t.Fatal("random anon fingerprint should not be stored")
+	}
+	if b, _ := st.IsGloballyBanned(ctx, "", "7.7.7.7"); !b {
+		t.Fatal("anon address not banned")
+	}
+}
+
+func TestDelroomAndExpiry(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	h.Main().Join(admin)
+
+	_ = info(t, h, admin, "/create doomed")
+	time.Sleep(200 * time.Millisecond)
+	if r := admin.CurrentRoom(); r == nil || r.Name != "doomed" {
+		t.Fatalf("not in doomed: %+v", r)
+	}
+	if got := info(t, h, admin, "/delroom main"); !strings.Contains(got, "cannot be deleted") {
+		t.Fatalf("delete main: %s", got)
+	}
+	if got := info(t, h, admin, "/delroom doomed"); !strings.Contains(got, "was deleted") && !strings.Contains(got, "Deleted #doomed") {
+		t.Fatalf("delroom: %s", got)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if r := admin.CurrentRoom(); r != h.Main() {
+		t.Fatalf("member not moved to main: %+v", r)
+	}
+	if _, ok, _ := st.GetChannelByName(ctx, "doomed"); ok {
+		t.Fatal("channel still in store")
+	}
+
+	// Expiry: an old empty room goes, a recently active one stays.
+	old, _ := st.CreateChannel(ctx, "stale", "fp")
+	if _, err := st.CreateChannel(ctx, "fresh", "fp"); err != nil {
+		t.Fatal(err)
+	}
+	_ = old
+	gone, err := h.ExpireRooms(ctx, time.Hour)
+	if err != nil || len(gone) != 0 {
+		t.Fatalf("fresh rooms expired: %v %v", gone, err)
+	}
+	gone, err = h.ExpireRooms(ctx, -time.Hour) // everything counts as stale
+	if err != nil || len(gone) != 2 {
+		t.Fatalf("expected both stale rooms removed: %v %v", gone, err)
+	}
+	if _, ok, _ := st.GetChannelByName(ctx, "main"); !ok {
+		t.Fatal("main must never expire")
+	}
+}
+
+func TestSeenAdminLogFilter(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	h.SetFilter(filter.New(nil))
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	bob := NewSession("SHA256:bob", "2.2.2.2", "bob")
+	h.Main().Join(admin)
+	h.Main().Join(bob)
+
+	if got := info(t, h, admin, "/seen bob"); !strings.Contains(got, "online now") {
+		t.Fatalf("seen online: %s", got)
+	}
+	_ = st.SetNickname(ctx, "SHA256:old", "olduser")
+	if got := info(t, h, admin, "/seen olduser"); !strings.Contains(got, "last seen") {
+		t.Fatalf("seen offline: %s", got)
+	}
+	if got := info(t, h, admin, "/seen nobody"); !strings.Contains(got, "No record") {
+		t.Fatalf("seen unknown: %s", got)
+	}
+
+	_ = info(t, h, bob, "/admin the sky is falling")
+	if got := info(t, h, bob, "/adminlog"); !strings.Contains(got, "Only a server administrator") {
+		t.Fatalf("adminlog non-admin: %s", got)
+	}
+	drain(admin)
+	HandleInput(ctx, h, admin, "/adminlog")
+	var found bool
+	for i := 0; i < 5 && !found; i++ {
+		if o := next(t, admin); o.Line != nil && strings.Contains(o.Line.Body, "the sky is falling") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("adminlog did not list the report")
+	}
+
+	drain(admin)
+	HandleInput(ctx, h, bob, "well shit")
+	if l := nextLine(t, admin, KindChat); l.Body != "well s***" {
+		t.Fatalf("filter: %q", l.Body)
+	}
+}
+
+func TestAfkThresholdConfigurable(t *testing.T) {
+	h, _ := adminHub(t)
+	h.SetAfkThreshold(time.Millisecond)
+	s := NewSession("SHA256:s", "1.1.1.1", "s")
+	h.Main().Join(s)
+	time.Sleep(20 * time.Millisecond)
+	h.CheckIdle(s)
+	if !s.IsAfk() {
+		t.Fatal("not marked away after custom threshold")
+	}
+}

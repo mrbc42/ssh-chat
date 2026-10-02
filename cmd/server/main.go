@@ -3,13 +3,18 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/mrbc42/ssh-chat/internal/filter"
 	"github.com/mrbc42/ssh-chat/internal/hub"
 	"github.com/mrbc42/ssh-chat/internal/sshserver"
 	"github.com/mrbc42/ssh-chat/internal/store"
@@ -20,6 +25,13 @@ func main() {
 	dbPath := flag.String("db", "./data/chat.db", "path to the SQLite database file")
 	hostKeyPath := flag.String("hostkey", "./data/hostkey", "path to the SSH host key (generated if absent)")
 	adminsPath := flag.String("admins", "./data/admins.txt", "path to a file listing admin SSH pubkey fingerprints, one per line")
+	afkAfter := flag.Duration("afk-after", hub.AfkThreshold, "idle time before a user is marked away")
+	profanity := flag.Bool("profanity-filter", true, "mask a built-in list of profanity in chat")
+	filterWords := flag.String("filter-words", "", "optional file of extra words to mask, one per line")
+	backupDir := flag.String("backup-dir", "", "directory for periodic database backups (default: <db dir>/backups; \"off\" disables)")
+	backupEvery := flag.Duration("backup-every", 24*time.Hour, "how often to back up the database")
+	backupKeep := flag.Int("backup-keep", 7, "how many database backups to keep")
+	roomExpiry := flag.Duration("room-expiry", 30*24*time.Hour, "delete empty channels idle this long (0 disables)")
 	flag.Parse()
 
 	if err := os.MkdirAll(dirOf(*dbPath), 0o755); err != nil {
@@ -38,6 +50,30 @@ func main() {
 		log.Fatalf("creating hub: %v", err)
 	}
 
+	h.SetAfkThreshold(*afkAfter)
+	if *profanity {
+		var extra []string
+		if *filterWords != "" {
+			if extra, err = filter.LoadWords(*filterWords); err != nil {
+				log.Fatalf("reading filter words: %v", err)
+			}
+		}
+		h.SetFilter(filter.New(extra))
+	}
+
+	bg, stopBg := context.WithCancel(context.Background())
+	defer stopBg()
+	if *backupDir != "off" && *backupEvery > 0 {
+		dir := *backupDir
+		if dir == "" {
+			dir = filepath.Join(dirOf(*dbPath), "backups")
+		}
+		go runBackups(bg, st, dir, filepath.Dir(*hostKeyPath), *backupEvery, *backupKeep)
+	}
+	if *roomExpiry > 0 {
+		go runRoomExpiry(bg, h, *roomExpiry)
+	}
+
 	srv, err := sshserver.New(*addr, *hostKeyPath, st, h)
 	if err != nil {
 		log.Fatalf("creating ssh server: %v", err)
@@ -48,6 +84,7 @@ func main() {
 	go func() {
 		<-sigc
 		log.Println("shutting down...")
+		stopBg()
 		h.BroadcastAll("*** server is shutting down ***")
 		_ = srv.Close()
 	}()
@@ -55,6 +92,66 @@ func main() {
 	log.Printf("ssh-chat listening on %s (db=%s)", *addr, *dbPath)
 	if err := srv.ListenAndServe(); err != nil {
 		log.Printf("server stopped: %v", err)
+	}
+}
+
+// runBackups snapshots the database every interval (and once at startup),
+// keeping the newest `keep` snapshots. The SSH host key is copied alongside
+// when not already there, since losing it breaks every client's trust.
+func runBackups(ctx context.Context, st *store.Store, dir, dataDir string, every time.Duration, keep int) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.Printf("backup: cannot create %s: %v", dir, err)
+		return
+	}
+	do := func() {
+		dest := filepath.Join(dir, "chat-"+time.Now().Format("20060102-150405")+".db")
+		if err := st.Backup(ctx, dest); err != nil {
+			log.Printf("backup failed: %v", err)
+			return
+		}
+		log.Printf("backup written: %s", dest)
+		if key, err := os.ReadFile(filepath.Join(dataDir, "hostkey")); err == nil {
+			if _, err := os.Stat(filepath.Join(dir, "hostkey")); err != nil {
+				_ = os.WriteFile(filepath.Join(dir, "hostkey"), key, 0o600)
+			}
+		}
+		files, _ := filepath.Glob(filepath.Join(dir, "chat-*.db"))
+		sort.Strings(files) // timestamped names sort oldest-first
+		for len(files) > keep {
+			_ = os.Remove(files[0])
+			files = files[1:]
+		}
+	}
+	do()
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			do()
+		}
+	}
+}
+
+// runRoomExpiry hourly deletes empty channels with no activity for maxIdle.
+func runRoomExpiry(ctx context.Context, h *hub.Hub, maxIdle time.Duration) {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		gone, err := h.ExpireRooms(ctx, maxIdle)
+		if err != nil {
+			log.Printf("room expiry: %v", err)
+		}
+		if len(gone) > 0 {
+			log.Printf("room expiry: deleted %v", gone)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
 	}
 }
 

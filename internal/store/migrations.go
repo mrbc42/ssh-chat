@@ -50,6 +50,15 @@ CREATE TABLE IF NOT EXISTS bans (
     PRIMARY KEY (channel_id, fp, ip)
 );
 
+CREATE TABLE IF NOT EXISTS global_bans (
+    fp         TEXT NOT NULL DEFAULT '',
+    ip         TEXT NOT NULL DEFAULT '',
+    banned_by  TEXT NOT NULL,
+    reason     TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (fp, ip)
+);
+
 CREATE TABLE IF NOT EXISTS admin_alerts (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     reporter_fp   TEXT NOT NULL,

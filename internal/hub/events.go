@@ -106,6 +106,7 @@ type evChat struct {
 	sess *Session
 	body string
 }
+type evShutdown struct{ done chan struct{} }
 type evAction struct {
 	sess *Session
 	body string
@@ -146,6 +147,7 @@ type evAdminAnnounce struct{ text string }
 func (evJoin) isRoomEvent()          {}
 func (evPart) isRoomEvent()          {}
 func (evChat) isRoomEvent()          {}
+func (evShutdown) isRoomEvent()      {}
 func (evAction) isRoomEvent()        {}
 func (evSystem) isRoomEvent()        {}
 func (evForceRemove) isRoomEvent()   {}
