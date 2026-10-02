@@ -33,8 +33,11 @@ import (
 // from what the server sees as a single IP.
 const maxConnsPerIP = 10
 
+// maxConnsPerMinute caps how often one address may open new connections.
+const maxConnsPerMinute = 30
+
 func New(addr, hostKeyPath string, st *store.Store, h *hub.Hub) (*ssh.Server, error) {
-	connLimiter := ratelimit.NewConnLimiter(maxConnsPerIP)
+	connLimiter := ratelimit.NewConnLimiterRate(maxConnsPerIP, maxConnsPerMinute)
 
 	s, err := wish.NewServer(
 		wish.WithAddress(addr),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -284,6 +285,18 @@ func (h *Hub) ExpireRooms(ctx context.Context, olderThan time.Duration) ([]strin
 		gone = append(gone, ch.Name)
 	}
 	return gone, nil
+}
+
+// flooded records a flood violation and disconnects a session that keeps
+// hammering the server despite being refused.
+func (h *Hub) flooded(sess *Session) {
+	if !sess.Strike() {
+		return
+	}
+	log.Printf("flood: disconnecting %s (%s, %s)", sess.Nick(), sess.FP, sess.IP)
+	line := errorLine("You have been disconnected for flooding the server.")
+	sess.send(Outbound{Line: &line})
+	sess.send(Outbound{Disconnect: true})
 }
 
 // mask applies the configured word filter.

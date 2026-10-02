@@ -11,6 +11,12 @@ import (
 
 const scrollbackReplayLimit = 50
 
+// Whole-channel message cap: a burst of 40, sustained 15 per second.
+const (
+	roomBurst     = 40
+	roomPerSecond = 15
+)
+
 // Room is an actor: all of its mutable state (members, locked, topic,
 // announce) is only ever touched from within its own run() goroutine, so no
 // locking is needed for membership or broadcast ordering.
@@ -22,6 +28,10 @@ type Room struct {
 	Name string
 
 	events chan roomEvent
+
+	// limiter caps the whole channel's message rate, on top of the per-user
+	// limits, so many connections together cannot swamp it.
+	limiter *tokenBucket
 
 	members  map[*Session]struct{}
 	locked   bool
@@ -36,6 +46,7 @@ func newRoom(h *Hub, st *store.Store, ch store.Channel) *Room {
 		ID:       ch.ID,
 		Name:     ch.Name,
 		events:   make(chan roomEvent, 256),
+		limiter:  newTokenBucket(roomBurst, roomPerSecond),
 		members:  make(map[*Session]struct{}),
 		locked:   ch.Locked,
 		announce: ch.Announce,
@@ -240,7 +251,21 @@ func (r *Room) handlePart(ctx context.Context, sess *Session, reason partReason)
 	r.broadcastExcept(sess, systemLine(text))
 }
 
+// roomAllows applies the channel-wide cap; a refused message is dropped and
+// only its sender is told.
+func (r *Room) roomAllows(sess *Session) bool {
+	if r.limiter.allow() {
+		return true
+	}
+	line := errorLine(fmt.Sprintf("#%s is receiving too many messages right now; yours was dropped.", r.Name))
+	sess.send(Outbound{Line: &line})
+	return false
+}
+
 func (r *Room) handleChat(ctx context.Context, sess *Session, body string) {
+	if !r.roomAllows(sess) {
+		return
+	}
 	m := store.Message{ChannelID: r.ID, SenderFP: sess.FP, SenderName: sess.Nick(), Body: body, Kind: "msg"}
 	_, _ = r.store.AppendMessage(ctx, m)
 	r.broadcastAll(chatLine(sess.Nick(), body))
@@ -263,6 +288,9 @@ func (r *Room) handleShutdown(done chan struct{}) {
 }
 
 func (r *Room) handleAction(ctx context.Context, sess *Session, body string) {
+	if !r.roomAllows(sess) {
+		return
+	}
 	m := store.Message{ChannelID: r.ID, SenderFP: sess.FP, SenderName: sess.Nick(), Body: body, Kind: "action"}
 	_, _ = r.store.AppendMessage(ctx, m)
 	r.broadcastAll(actionLine(sess.Nick(), body))

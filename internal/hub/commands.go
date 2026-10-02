@@ -231,6 +231,13 @@ func sendChat(ctx context.Context, h *Hub, sess *Session, body string) {
 	if !sess.Allow() {
 		line := errorLine("You're sending messages too fast. Slow down.")
 		sess.send(Outbound{Line: &line})
+		h.flooded(sess)
+		return
+	}
+	if sess.IsRepeat(body) {
+		line := errorLine("Please don't repeat the same message over and over.")
+		sess.send(Outbound{Line: &line})
+		h.flooded(sess)
 		return
 	}
 	if len(body) > maxMessageLen {
@@ -258,6 +265,12 @@ func Dispatch(ctx context.Context, h *Hub, sess *Session, line string) {
 	cmd, ok := registry[name]
 	if !ok {
 		sendError(sess, fmt.Sprintf("Unknown command /%s. Type /help for a list of commands.", name))
+		return
+	}
+
+	if !sess.AllowCommand() {
+		sendError(sess, "You're using commands too fast. Slow down.")
+		h.flooded(sess)
 		return
 	}
 
@@ -372,10 +385,15 @@ func cmdNick(c *CmdCtx, args []string) []string {
 	if old == nick {
 		return []string{"That is already your nickname."}
 	}
+	if left := c.Sess.CooldownLeft("nick"); left > 0 {
+		c.Hub.flooded(c.Sess)
+		return []string{fmt.Sprintf("Please wait %s before changing your nickname again.", waitText(left))}
+	}
 	if !c.Hub.NickAvailable(c.ctx, nick, c.Sess) {
 		return []string{fmt.Sprintf("The nickname %q is already taken.", nick)}
 	}
 	c.Sess.SetNick(nick)
+	c.Sess.StartCooldown("nick", nickCooldown)
 	if !strings.HasPrefix(c.Sess.FP, "anon-") {
 		if err := c.Store.SetNickname(c.ctx, c.Sess.FP, nick); err != nil {
 			return []string{"Failed to save nickname (it will reset next connection)."}
@@ -426,12 +444,19 @@ func cmdCreate(c *CmdCtx, args []string) []string {
 	if err := validateChannelName(name); err != nil {
 		return []string{err.Error()}
 	}
+	if _, exists, _ := c.Store.GetChannelByName(c.ctx, name); exists {
+		return []string{fmt.Sprintf("Channel #%s already exists. Use /join %s instead.", name, name)}
+	}
+	if msg := checkCanCreate(c); msg != "" {
+		return []string{msg}
+	}
 	if _, err := c.Store.CreateChannel(c.ctx, name, c.Sess.FP); err != nil {
 		if err == store.ErrChannelExists {
 			return []string{fmt.Sprintf("Channel #%s already exists. Use /join %s instead.", name, name)}
 		}
 		return []string{"Failed to create channel."}
 	}
+	c.Sess.StartCooldown("create", createCooldown)
 	return joinByName(c, name, true)
 }
 
@@ -452,10 +477,14 @@ func joinByName(c *CmdCtx, name string, justCreated bool) []string {
 		if err := validateChannelName(name); err != nil {
 			return []string{err.Error()}
 		}
+		if msg := checkCanCreate(c); msg != "" {
+			return []string{msg}
+		}
 		ch, err = c.Store.CreateChannel(c.ctx, name, c.Sess.FP)
 		if err != nil {
 			return []string{"Failed to create channel."}
 		}
+		c.Sess.StartCooldown("create", createCooldown)
 		justCreated = true
 	}
 
@@ -688,6 +717,11 @@ func cmdAdmin(c *CmdCtx, args []string) []string {
 	if msg == "" {
 		return []string{"Usage: /admin <message describing the problem>"}
 	}
+	if left := c.Sess.CooldownLeft("admin"); left > 0 {
+		c.Hub.flooded(c.Sess)
+		return []string{fmt.Sprintf("Please wait %s before sending another admin report.", waitText(left))}
+	}
+	c.Sess.StartCooldown("admin", adminCooldown)
 	room := c.Sess.CurrentRoom()
 	roomName := store.MainChannelName
 	if room != nil {
@@ -715,6 +749,10 @@ func cmdMsg(c *CmdCtx, args []string) []string {
 	}
 	if strings.EqualFold(target, c.Sess.Nick()) {
 		return []string{"You can't message yourself."}
+	}
+	if !c.Sess.Allow() {
+		c.Hub.flooded(c.Sess)
+		return []string{"You're sending messages too fast. Slow down."}
 	}
 	targetSess := c.Hub.FindSessionByNick(target)
 	if targetSess == nil {
@@ -808,7 +846,12 @@ func cmdMe(c *CmdCtx, args []string) []string {
 		return []string{"Usage: /me <action>"}
 	}
 	if !c.Sess.Allow() {
+		c.Hub.flooded(c.Sess)
 		return []string{"You're sending messages too fast. Slow down."}
+	}
+	if c.Sess.IsRepeat("/me " + body) {
+		c.Hub.flooded(c.Sess)
+		return []string{"Please don't repeat the same action over and over."}
 	}
 	if len(body) > maxMessageLen {
 		body = body[:maxMessageLen]
@@ -1051,4 +1094,34 @@ func cmdAdminLog(c *CmdCtx, args []string) []string {
 		lines = append(lines, fmt.Sprintf("  %s %s in #%s (%s): %s", a.CreatedAt.Format("01-02 15:04"), a.ReporterNick, a.ChannelName, seen, a.Message))
 	}
 	return lines
+}
+
+// Long cooldowns and caps for slow-burn abuse. The per-message and
+// per-command rate limits live in Session.
+const (
+	nickCooldown     = 10 * time.Second
+	adminCooldown    = 30 * time.Second
+	createCooldown   = 20 * time.Second
+	maxOwnedChannels = 5   // channels one identity may own at a time
+	maxTotalChannels = 300 // server-wide ceiling, including #main
+)
+
+func waitText(d time.Duration) string {
+	return fmt.Sprintf("%ds", int(d.Round(time.Second).Seconds()))
+}
+
+// checkCanCreate returns a refusal message, or "" if the caller may create
+// another channel right now.
+func checkCanCreate(c *CmdCtx) string {
+	if left := c.Sess.CooldownLeft("create"); left > 0 {
+		c.Hub.flooded(c.Sess)
+		return fmt.Sprintf("Please wait %s before creating another channel.", waitText(left))
+	}
+	if n, err := c.Store.CountChannelsByCreator(c.ctx, c.Sess.FP); err == nil && n >= maxOwnedChannels {
+		return fmt.Sprintf("You already own %d channels, the limit. Let an old one expire or ask an admin to delete it.", n)
+	}
+	if n, err := c.Store.CountChannels(c.ctx); err == nil && n >= maxTotalChannels {
+		return "The server has reached its channel limit. Try joining an existing channel."
+	}
+	return ""
 }

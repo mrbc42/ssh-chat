@@ -116,7 +116,7 @@ type Content struct {
 func defaultConfig() Config {
 	return Config{
 		Nick: "SysOp-Gus", Board: "Gus's Garage BBS",
-		TypingDelayMs: [2]int{1000, 3000}, Wrap: 80,
+		TypingDelayMs: [2]int{1000, 3000}, Wrap: 60,
 		IdleMinutes: 25, LonelyMinutes: 12, LonelyCooldownMinutes: 120,
 		BusyThreshold: 6, BusyGreetProbability: 0.25, RemarkProbability: 0.35,
 		RapidReconnectSeconds: 120, RatePerUserPerMin: 6, RateGlobalPerMin: 30,
@@ -167,7 +167,7 @@ func Load(dir string) (Config, *Content, error) {
 	}
 	cfg.locName = cfg.loc.String()
 	if cfg.Wrap < 20 {
-		cfg.Wrap = 80
+		cfg.Wrap = 60
 	}
 	if cfg.RecentMemory < 1 {
 		cfg.RecentMemory = 3

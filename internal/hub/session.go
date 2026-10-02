@@ -27,7 +27,15 @@ type Session struct {
 
 	joinNotice string // set before Join, consumed by Room.handleJoin
 
-	limiter *tokenBucket
+	limiter    *tokenBucket // chat messages
+	cmdLimiter *tokenBucket // every slash command
+	trusted    bool         // in-process integrations (the bot) skip the flood limits
+
+	cooldowns  map[string]time.Time // per-command lockouts, by command name
+	lastBody   string               // normalised last chat body, for repeat detection
+	lastBodyAt time.Time
+	repeats    int
+	strikes    []time.Time // recent flood-limit violations
 }
 
 func NewSession(fp, ip, nick string) *Session {
@@ -39,6 +47,7 @@ func NewSession(fp, ip, nick string) *Session {
 		nick:         nick,
 		lastActivity: time.Now(),
 		limiter:      newTokenBucket(10, 5), // burst 10, refill 5/sec
+		cmdLimiter:   newTokenBucket(8, 2),  // burst 8, refill 2/sec
 	}
 }
 
@@ -104,7 +113,91 @@ func (s *Session) IdleFor() time.Duration {
 
 // Allow reports whether the session is within its chat-flood budget.
 func (s *Session) Allow() bool {
-	return s.limiter.allow()
+	return s.isTrusted() || s.limiter.allow()
+}
+
+// AllowCommand is the flood gate for every slash command.
+func (s *Session) AllowCommand() bool {
+	return s.isTrusted() || s.cmdLimiter.allow()
+}
+
+// SetTrusted exempts a session from the per-user flood limits. Only for
+// in-process integrations that do their own output limiting (the bot).
+func (s *Session) SetTrusted(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.trusted = v
+}
+
+func (s *Session) isTrusted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trusted
+}
+
+// CooldownLeft returns how long the named command is still locked for this
+// session (0 = free to use).
+func (s *Session) CooldownLeft(name string) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if left := time.Until(s.cooldowns[name]); left > 0 {
+		return left
+	}
+	return 0
+}
+
+// StartCooldown locks the named command for d (call after it succeeds).
+func (s *Session) StartCooldown(name string, d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cooldowns == nil {
+		s.cooldowns = make(map[string]time.Time)
+	}
+	s.cooldowns[name] = time.Now().Add(d)
+}
+
+const (
+	repeatWindow = 10 * time.Second
+	strikeWindow = 30 * time.Second
+	// maxStrikes is deliberately high: a user who pastes a long block of text
+	// trips the rate limit on many lines but must not be thrown off; a script
+	// hammering the server reaches it within a second or two.
+	maxStrikes = 60
+)
+
+// IsRepeat reports whether body is the third identical message in a row
+// within repeatWindow (two repeats are allowed: "lol", "lol").
+func (s *Session) IsRepeat(body string) bool {
+	norm := strings.ToLower(strings.TrimSpace(body))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if norm == s.lastBody && now.Sub(s.lastBodyAt) < repeatWindow {
+		s.repeats++
+	} else {
+		s.repeats = 0
+	}
+	s.lastBody, s.lastBodyAt = norm, now
+	return s.repeats >= 2
+}
+
+// Strike records a flood-limit violation and reports whether the session has
+// now committed enough of them recently to be disconnected.
+func (s *Session) Strike() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.trusted {
+		return false
+	}
+	now := time.Now()
+	kept := s.strikes[:0]
+	for _, t := range s.strikes {
+		if now.Sub(t) < strikeWindow {
+			kept = append(kept, t)
+		}
+	}
+	s.strikes = append(kept, now)
+	return len(s.strikes) >= maxStrikes
 }
 
 // SetJoinNotice sets a private informational line the room delivers to this

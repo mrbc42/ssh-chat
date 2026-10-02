@@ -54,6 +54,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	b.cfg.loc = time.UTC
+	b.cfg.Wrap = 1000           // tests compare whole pool lines; TestOutputWrapsAndPaces sets the real width
 	b.cfg.RemarkProbability = 0 // opt in per test
 	e.b = b
 	t.Cleanup(func() { _ = b.st.close() })
@@ -596,7 +597,7 @@ func TestTriviaScoring(t *testing.T) {
 	e.h.reset()
 
 	e.chat(a, "!trivia")
-	if len(e.h.said) != 2 || !strings.HasPrefix(e.h.said[1], "Q: ") {
+	if e.b.trivia == nil || !strings.Contains(e.said(), "Q: ") {
 		t.Fatalf("trivia question not asked: %v", e.h.said)
 	}
 	answer := e.b.trivia.q.A[0]
@@ -712,12 +713,15 @@ func TestOutputWrapsAndPaces(t *testing.T) {
 	e := newEnv(t)
 	var slept []time.Duration
 	e.b.sleep = func(d time.Duration) { slept = append(slept, d) }
+	e.b.cfg.Wrap = 60
 	e.b.cfg.TypingIndicator = true
 	e.b.cfg.Baud = 2400
 	e.b.say(kindPlain, strings.Repeat("word ", 60))
 	for _, l := range e.h.said {
-		if len(l) > 80 {
-			t.Fatalf("line over 80 columns: %d", len(l))
+		// With the server's "[HH:MM] SysOp-Gus: " prefix (19 chars) a line must
+		// still fit an 80-column terminal.
+		if len(l) > e.b.cfg.Wrap || len(l)+len("[02:29] SysOp-Gus: ") > 80 {
+			t.Fatalf("line too wide: %d chars (wrap %d)", len(l), e.b.cfg.Wrap)
 		}
 	}
 	if len(e.h.said) < 3 {

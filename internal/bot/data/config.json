@@ -9,7 +9,7 @@
  "typing_indicator": false,
  "baud": 0,
  "colour": false,
- "wrap": 80,
+ "wrap": 60,
  "idle_minutes": 25,
  "lonely_minutes": 12,
  "lonely_cooldown_minutes": 120,

@@ -31,6 +31,7 @@ func Start(ctx context.Context, h *hub.Hub, st *store.Store, o Options) (string,
 		return "", err
 	}
 	hh.sess = hub.NewSession(botFP, "", b.Nick())
+	hh.sess.SetTrusted(true) // the bot enforces its own output limits
 	// Reserve the nickname so no user can take it, even while the bot is down.
 	if err := st.SetNickname(ctx, botFP, b.Nick()); err != nil {
 		return "", fmt.Errorf("reserving bot nick: %w", err)

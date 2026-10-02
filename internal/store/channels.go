@@ -190,3 +190,17 @@ func (s *Store) StaleChannels(ctx context.Context, cutoff time.Time) ([]Channel,
 	}
 	return out, rows.Err()
 }
+
+// CountChannels returns how many channels exist (including #main).
+func (s *Store) CountChannels(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM channels`).Scan(&n)
+	return n, err
+}
+
+// CountChannelsByCreator returns how many channels fp created.
+func (s *Store) CountChannelsByCreator(ctx context.Context, fp string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM channels WHERE creator_fp = ? AND is_main = 0`, fp).Scan(&n)
+	return n, err
+}
