@@ -1,0 +1,66 @@
+[
+ {
+  "text": "Well done is better than well said.",
+  "by": "Benjamin Franklin"
+ },
+ {
+  "text": "Lost time is never found again.",
+  "by": "Benjamin Franklin"
+ },
+ {
+  "text": "Brevity is the soul of wit.",
+  "by": "William Shakespeare, Hamlet"
+ },
+ {
+  "text": "Simplicity is prerequisite for reliability.",
+  "by": "Edsger W. Dijkstra"
+ },
+ {
+  "text": "Premature optimization is the root of all evil.",
+  "by": "Donald Knuth"
+ },
+ {
+  "text": "The best way to predict the future is to invent it.",
+  "by": "Alan Kay"
+ },
+ {
+  "text": "Talk is cheap. Show me the code.",
+  "by": "Linus Torvalds"
+ },
+ {
+  "text": "A journey of a thousand miles begins with a single step.",
+  "by": "Lao Tzu"
+ },
+ {
+  "text": "Fortune favours the bold.",
+  "by": "Virgil"
+ },
+ {
+  "text": "Knowledge is power.",
+  "by": "Francis Bacon"
+ },
+ {
+  "text": "I think, therefore I am.",
+  "by": "Rene Descartes"
+ },
+ {
+  "text": "Programs must be written for people to read, and only incidentally for machines to execute.",
+  "by": "Abelson and Sussman, SICP"
+ },
+ {
+  "text": "There are only two hard things in computer science: cache invalidation and naming things.",
+  "by": "Phil Karlton"
+ },
+ {
+  "text": "Make it work, make it right, make it fast.",
+  "by": "Kent Beck"
+ },
+ {
+  "text": "Software is eating the world.",
+  "by": "Marc Andreessen"
+ },
+ {
+  "text": "It's easier to ask forgiveness than it is to get permission.",
+  "by": "Grace Hopper (attributed)"
+ }
+]

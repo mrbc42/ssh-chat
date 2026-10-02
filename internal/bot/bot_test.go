@@ -1,0 +1,781 @@
+package bot
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+)
+
+type pmMsg struct{ to, text string }
+
+type fakeHost struct {
+	said    []string
+	actions []string
+	pms     []pmMsg
+	online  []Person
+}
+
+func (f *fakeHost) Say(t string)     { f.said = append(f.said, t) }
+func (f *fakeHost) Action(t string)  { f.actions = append(f.actions, t) }
+func (f *fakeHost) PM(n, t string)   { f.pms = append(f.pms, pmMsg{n, t}) }
+func (f *fakeHost) Online() []Person { return f.online }
+func (f *fakeHost) reset()           { f.said, f.pms, f.actions = nil, nil, nil }
+func (f *fakeHost) joined(p Person)  { f.online = append(f.online, p) }
+func (f *fakeHost) left(p Person) {
+	for i, q := range f.online {
+		if q.ID == p.ID {
+			f.online = append(f.online[:i], f.online[i+1:]...)
+			return
+		}
+	}
+}
+
+type env struct {
+	t     *testing.T
+	b     *Bot
+	h     *fakeHost
+	clock time.Time
+}
+
+func newEnv(t *testing.T) *env {
+	t.Helper()
+	e := &env{t: t, h: &fakeHost{}, clock: time.Date(2026, 10, 7, 14, 0, 0, 0, time.UTC)} // a Wednesday afternoon
+	b, err := New(e.h, Options{
+		DBPath:        filepath.Join(t.TempDir(), "bot.db"),
+		UnmatchedPath: filepath.Join(t.TempDir(), "unmatched.log"),
+		Now:           func() time.Time { return e.clock },
+		Sleep:         func(time.Duration) {},
+		Seed:          [2]uint64{1, 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.cfg.loc = time.UTC
+	b.cfg.RemarkProbability = 0 // opt in per test
+	e.b = b
+	t.Cleanup(func() { _ = b.st.close() })
+	return e
+}
+
+func keyed(id, nick string) Person { return Person{ID: id, Nick: nick, FP: "SHA256:" + id} }
+func anonP(id, nick string) Person { return Person{ID: id, Nick: nick, FP: "anon-" + id, Anon: true} }
+
+func (e *env) login(p Person)  { e.h.joined(p); e.b.Handle(Event{Kind: EvLogin, P: p}) }
+func (e *env) logoff(p Person) { e.h.left(p); e.b.Handle(Event{Kind: EvLogoff, P: p}) }
+func (e *env) chat(p Person, s string) {
+	e.b.Handle(Event{Kind: EvChat, P: p, Body: s})
+}
+func (e *env) advance(d time.Duration) { e.clock = e.clock.Add(d) }
+
+func (e *env) said() string { return strings.Join(e.h.said, "\n") }
+
+// inPool reports whether line is some variant of pool with vars filled.
+func (e *env) inPool(pool string, vars map[string]string, line string) bool {
+	for _, v := range e.b.c.Pools[pool] {
+		if fill(v.Text, vars) == line {
+			return true
+		}
+	}
+	return false
+}
+
+func TestStarterContentMeetsSpec(t *testing.T) {
+	_, c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePools(c); err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string][]string{
+		"login": {"nick"}, "logoff": {"nick"}, "greet_first": {"nick", "board"}, "greet_returning": {"nick", "days"},
+		"greet_anon": {"nick"}, "absence_30": {"nick", "days"}, "milestone_caller": {"nick", "n"},
+	}
+	ph := regexp.MustCompile(`\{(\w+)\}`)
+	global := map[string]bool{"nick": true, "bot": true, "board": true, "days": true, "n": true, "years": true,
+		"target": true, "from": true, "ago": true, "msg": true, "expr": true, "total": true, "rolls": true,
+		"time": true, "count": true, "list": true, "date": true, "calls": true, "users": true, "record": true,
+		"trivia": true, "seconds": true, "pts": true, "answer": true}
+	// Pools that run without a person must not use {nick}.
+	noNick := map[string]bool{"lonely": true, "idle_intro": true, "quote_intro": true, "maintenance": true,
+		"trivia_ask": true, "trivia_timeout": true, "node_record": true}
+	for name, pool := range c.Pools {
+		if len(pool) < 5 || len(pool) > 10 {
+			t.Errorf("pool %s has %d variants, want 5-10", name, len(pool))
+		}
+		for _, v := range pool {
+			for _, m := range ph.FindAllStringSubmatch(v.Text, -1) {
+				if !global[m[1]] {
+					t.Errorf("pool %s: unknown placeholder {%s}", name, m[1])
+				}
+				if m[1] == "nick" && noNick[name] {
+					t.Errorf("pool %s uses {nick} but runs with no person", name)
+				}
+			}
+		}
+	}
+	_ = allowed
+	for _, name := range []string{"greet_first", "greet_returning", "greet_returning_today", "greet_rapid", "greet_anon"} {
+		if len(c.Pools[name]) < 6 {
+			t.Errorf("greeting pool %s too small", name)
+		}
+	}
+	for _, name := range []string{"greet_first", "greet_returning"} {
+		if len(c.Pools[name]) < 8 {
+			t.Errorf("%s needs at least 8 variants, has %d", name, len(c.Pools[name]))
+		}
+	}
+	if len(c.Trivia) < 20 || len(c.Fortunes) < 20 || len(c.Oneliners) < 15 {
+		t.Errorf("starter content too small: trivia=%d fortunes=%d oneliners=%d", len(c.Trivia), len(c.Fortunes), len(c.Oneliners))
+	}
+	for _, q := range c.Trivia {
+		if q.Q == "" || len(q.A) == 0 {
+			t.Errorf("bad trivia entry %+v", q)
+		}
+	}
+	for _, h := range c.History {
+		if _, err := time.Parse("01-02", h.Date); err != nil {
+			t.Errorf("bad history date %q", h.Date)
+		}
+	}
+}
+
+func TestJoinAndLeave(t *testing.T) {
+	e := newEnv(t)
+	dave := keyed("dave", "Dave")
+	e.login(dave)
+	out := e.said()
+	if !strings.Contains(out, "Dave") || len(e.h.said) < 2 {
+		t.Fatalf("expected entrance + first-time greeting naming Dave, got %q", out)
+	}
+	if !e.inPool("greet_first", e.b.vars(dave), e.h.said[1]) {
+		t.Errorf("second line should be a greet_first variant, got %q", e.h.said[1])
+	}
+
+	e.h.reset()
+	e.logoff(dave)
+	if len(e.h.said) != 1 || !e.inPool("logoff", e.b.vars(dave), e.h.said[0]) {
+		t.Fatalf("expected one logoff line, got %v", e.h.said)
+	}
+
+	// Returning after 5 days gets "N days".
+	e.advance(5 * 24 * time.Hour)
+	e.h.reset()
+	e.login(dave)
+	if !e.inPool("greet_returning", e.b.vars(dave, "days", "5"), e.h.said[1]) {
+		t.Fatalf("want greet_returning with 5 days, got %v", e.h.said)
+	}
+
+	// Quick redial gets the rapid-reconnect joke.
+	e.logoff(dave)
+	e.advance(30 * time.Second)
+	e.h.reset()
+	e.login(dave)
+	if !e.inPool("greet_rapid", e.b.vars(dave), e.h.said[1]) {
+		t.Fatalf("want greet_rapid, got %v", e.h.said)
+	}
+}
+
+func TestSilentDuringNormalChat(t *testing.T) {
+	e := newEnv(t)
+	a, b := keyed("a", "Alice"), keyed("b", "Bob")
+	e.login(a)
+	e.login(b)
+	e.chat(a, "hi bob")
+	e.chat(b, "hi alice")
+	e.h.reset()
+	for _, line := range []string{"how was your day", "mine was ok", "check this out https://example.com", "lol", "!notacommand", "who knows",
+		"the sysop is annoying", "gus is cool"} {
+		e.chat(a, line)
+		e.chat(b, line+" 2")
+		e.advance(5 * time.Second)
+		e.b.Tick()
+	}
+	if len(e.h.said)+len(e.h.pms) != 0 {
+		t.Fatalf("bot spoke during normal chat: %v %v", e.h.said, e.h.pms)
+	}
+}
+
+func TestAddressedAndCommands(t *testing.T) {
+	e := newEnv(t)
+	a := keyed("a", "Alice")
+	e.login(a)
+	e.chat(a, "warmup") // burn first-message reaction
+	e.h.reset()
+
+	e.chat(a, "@SysOp-Gus asdf qwerty")
+	if len(e.h.said) != 1 || !e.inPool("fallback", e.b.vars(a), e.h.said[0]) {
+		t.Fatalf("want fallback, got %v", e.h.said)
+	}
+	data, _ := readFile(e.b.unmatchedPath)
+	if !strings.Contains(data, "Alice") || !strings.Contains(data, "asdf qwerty") {
+		t.Fatalf("unmatched.log missing entry: %q", data)
+	}
+
+	e.h.reset()
+	e.chat(a, "@SysOp-Gus how do I change my nickname?")
+	if !strings.Contains(e.said(), "/nick") {
+		t.Fatalf("FAQ miss: %v", e.h.said)
+	}
+
+	for _, cmd := range []string{"!help", "!time", "!who", "!stats", "!rules", "!motd", "!fortune", "!quote", "!roll 2d6", "!ROLL d20", "!seen Alice"} {
+		e.advance(20 * time.Second) // stay under the per-user rate limit
+		e.h.reset()
+		e.chat(a, cmd)
+		if len(e.h.said) == 0 {
+			t.Errorf("%s produced no reply", cmd)
+		}
+	}
+	e.advance(20 * time.Second)
+	e.h.reset()
+	e.chat(a, "!roll 99d99")
+	if !e.inPool("roll_bad", e.b.vars(a), e.said()) {
+		t.Errorf("bad roll not rejected: %v", e.h.said)
+	}
+}
+
+func TestIdleAndLonely(t *testing.T) {
+	e := newEnv(t)
+	a, b := keyed("a", "Alice"), keyed("b", "Bob")
+	e.login(a)
+	e.login(b)
+	e.h.reset()
+
+	e.advance(10 * time.Minute)
+	e.b.Tick()
+	if len(e.h.said) != 0 {
+		t.Fatalf("posted too early: %v", e.h.said)
+	}
+	e.advance(20 * time.Minute) // 30 min quiet
+	e.b.Tick()
+	if len(e.h.said) < 2 {
+		t.Fatalf("expected idle intro + content, got %v", e.h.said)
+	}
+	first := len(e.h.said)
+
+	// Never twice in a row without human activity.
+	e.advance(2 * time.Hour)
+	e.b.Tick()
+	e.b.Tick()
+	if len(e.h.said) != first {
+		t.Fatalf("idle posted twice without human activity: %v", e.h.said)
+	}
+	e.chat(a, "I'm back")
+	e.advance(30 * time.Minute)
+	e.h.reset()
+	e.b.Tick()
+	if len(e.h.said) == 0 {
+		t.Fatal("idle should resume after human activity")
+	}
+
+	// Lonely: one user, quiet.
+	e2 := newEnv(t)
+	solo := keyed("s", "Solo")
+	e2.login(solo)
+	e2.h.reset()
+	e2.advance(13 * time.Minute)
+	e2.b.Tick()
+	if len(e2.h.said) != 1 || !e2.inPool("lonely", e2.b.vars(Person{}), e2.h.said[0]) {
+		t.Fatalf("want one lonely line, got %v", e2.h.said)
+	}
+	e2.advance(3 * time.Hour)
+	e2.h.reset()
+	e2.b.Tick()
+	if len(e2.h.said) != 0 {
+		t.Fatalf("lonely/idle repeated without human activity: %v", e2.h.said)
+	}
+
+	// Nobody online: stay quiet.
+	e3 := newEnv(t)
+	e3.advance(5 * time.Hour)
+	e3.b.Tick()
+	if len(e3.h.said) != 0 {
+		t.Fatalf("spoke to an empty room: %v", e3.h.said)
+	}
+}
+
+func TestBusyRoomStaysQuiet(t *testing.T) {
+	e := newEnv(t)
+	e.b.cfg.BusyGreetProbability = 0
+	for i := 0; i < 6; i++ {
+		e.h.joined(keyed(string(rune('a'+i)), "U"+string(rune('a'+i))))
+	}
+	newbie := keyed("z", "Zed")
+	e.h.reset()
+	e.login(newbie)
+	if len(e.h.said) != 0 {
+		t.Fatalf("busy room got chatty: %v", e.h.said)
+	}
+	e.advance(3 * time.Hour)
+	e.b.Tick()
+	if len(e.h.said) != 0 {
+		t.Fatalf("idle post in a busy room: %v", e.h.said)
+	}
+}
+
+func TestTellDeliveredAtNextLogin(t *testing.T) {
+	e := newEnv(t)
+	alice, bob := keyed("a", "Alice"), keyed("b", "Bob")
+	e.login(bob)
+	e.logoff(bob)
+	e.login(alice)
+	e.chat(alice, "hi all") // spend the first-message reaction
+	e.h.reset()
+
+	e.chat(alice, "!tell Bob the board is on fire  \x1b[31mred\x1b[0m")
+	tv := e.b.vars(alice, "target", "Bob")
+	if len(e.h.said) != 1 || !e.inPool("tell_stored", tv, e.h.said[0]) {
+		t.Fatalf("want tell_stored, got %v", e.h.said)
+	}
+	e.advance(26 * time.Hour)
+	e.h.reset()
+	e.login(bob)
+	if len(e.h.pms) != 1 || e.h.pms[0].to != "Bob" {
+		t.Fatalf("want one PM to Bob, got %v", e.h.pms)
+	}
+	body := e.h.pms[0].text
+	if !strings.Contains(body, "board is on fire") || !strings.Contains(body, "Alice") || strings.ContainsRune(body, 0x1b) {
+		t.Fatalf("bad delivery (must be sanitised): %q", body)
+	}
+	// Delivered once only.
+	e.logoff(bob)
+	e.h.reset()
+	e.login(bob)
+	if len(e.h.pms) != 0 {
+		t.Fatalf("tell delivered twice: %v", e.h.pms)
+	}
+}
+
+func TestTellRules(t *testing.T) {
+	e := newEnv(t)
+	alice, bob, ghost := keyed("a", "Alice"), keyed("b", "Bob"), anonP("g", "Ghost")
+	e.login(bob)
+	e.logoff(bob)
+	e.login(alice)
+	e.login(ghost)
+	e.chat(alice, "hi all") // spend the first-message reaction
+	e.h.reset()
+
+	check := func(from Person, cmd, pool string) {
+		t.Helper()
+		e.advance(time.Minute)
+		e.h.reset()
+		e.chat(from, cmd)
+		if len(e.h.said) != 1 {
+			t.Fatalf("%q: want one reply, got %v", cmd, e.h.said)
+		}
+		for _, v := range e.b.c.Pools[pool] {
+			if fill(v.Text, e.b.vars(from, "target", strings.Fields(cmd + " x")[1])) == e.h.said[0] {
+				return
+			}
+		}
+		t.Fatalf("%q: reply %q is not from pool %s", cmd, e.h.said[0], pool)
+	}
+	check(ghost, "!tell Bob hi", "tell_need_key")
+	check(alice, "!tell Nobody hi", "tell_unknown")
+	check(alice, "!tell Alice hi", "tell_self")
+	check(alice, "!tell SysOp-Gus hi", "tell_self")
+	check(alice, "!tell Bob", "tell_usage")
+	check(alice, "!tell Ghost hi", "tell_unknown") // anon target online
+	e.login(bob)
+	check(alice, "!tell Bob you're here", "tell_online")
+	e.logoff(bob)
+
+	for i := 0; i < e.b.cfg.TellMaxPerSender; i++ {
+		check(alice, "!tell Bob msg", "tell_stored")
+	}
+	check(alice, "!tell Bob one more", "tell_limit")
+
+	// Recipient cap: other senders hit tell_full.
+	e.b.cfg.TellMaxPerRecipient = e.b.cfg.TellMaxPerSender
+	carol := keyed("c", "Carol")
+	e.login(carol)
+	e.chat(carol, "hi all")
+	check(carol, "!tell Bob overflow", "tell_full")
+
+	// Expiry.
+	e.b.st.purgeTells(e.clock.Add(time.Hour))
+	if n := e.b.st.countTellsTo("SHA256:b"); n != 0 {
+		t.Fatalf("expired tells not purged: %d", n)
+	}
+}
+
+func TestEchoedTextCannotBecomeCommands(t *testing.T) {
+	e := newEnv(t)
+	e.b.deliver([]outLine{{text: "/gban everyone"}, {text: "/quit now"}, {text: "ok"}})
+	for _, l := range e.h.said {
+		if strings.HasPrefix(l, "/") {
+			t.Fatalf("line could run as a server command: %q", l)
+		}
+	}
+	if clean("a\x1b[2Jb\r\nc\x00d", 0) != "a [2Jb c d" {
+		t.Fatalf("clean() = %q", clean("a\x1b[2Jb\r\nc\x00d", 0))
+	}
+	if got := clean(strings.Repeat("x", 500), 10); len(got) != 10 {
+		t.Fatalf("clean max: %d", len(got))
+	}
+}
+
+func TestRateLimiting(t *testing.T) {
+	e := newEnv(t)
+	a := keyed("a", "Alice")
+	e.login(a)
+	e.chat(a, "x")
+	e.h.reset()
+	for i := 0; i < 30; i++ {
+		e.chat(a, "!time")
+	}
+	replies := 0
+	for _, l := range e.h.said {
+		if !e.inPool("rate_limited", e.b.vars(a), l) {
+			replies++
+		}
+	}
+	if replies > e.b.cfg.RatePerUserPerMin {
+		t.Fatalf("user got %d replies in a minute, limit %d", replies, e.b.cfg.RatePerUserPerMin)
+	}
+	if len(e.h.said) > e.b.cfg.RatePerUserPerMin+1 {
+		t.Fatalf("rate-limit notice repeated: %d lines", len(e.h.said))
+	}
+
+	// The global cap bounds total output however many users ask.
+	e2 := newEnv(t)
+	for i := 0; i < 20; i++ {
+		u := keyed(string(rune('a'+i)), "U"+string(rune('a'+i)))
+		e2.h.joined(u)
+		e2.chat(u, "x")
+	}
+	e2.h.reset()
+	for i := 0; i < 20; i++ {
+		e2.chat(e2.h.online[i], "!time")
+		e2.chat(e2.h.online[i], "!who")
+	}
+	if len(e2.h.said) > e2.b.cfg.RateGlobalPerMin {
+		t.Fatalf("global cap exceeded: %d lines", len(e2.h.said))
+	}
+}
+
+func TestMilestonesAbsenceAnniversary(t *testing.T) {
+	e := newEnv(t)
+	e.b.st.set("calls", "99")
+	dave := keyed("d", "Dave")
+	e.login(dave)
+	if !strings.Contains(e.said(), "100") {
+		t.Fatalf("caller #100 not announced: %v", e.h.said)
+	}
+
+	// Visit milestone: pre-seed a user with 9 visits.
+	e.b.st.recordVisit("SHA256:v", "Vera", e.clock)
+	for i := 0; i < 8; i++ {
+		e.b.st.recordVisit("SHA256:v", "Vera", e.clock)
+	}
+	e.advance(2 * time.Hour)
+	e.h.reset()
+	e.login(keyed("v", "Vera"))
+	if !strings.Contains(e.said(), "10") {
+		t.Fatalf("10th visit not announced: %v", e.h.said)
+	}
+
+	// Long absence and anniversary together.
+	e.advance(24 * time.Hour)
+	e.logoff(dave)
+	e.advance(400 * 24 * time.Hour)
+	e.h.reset()
+	e.login(dave)
+	got := e.said()
+	if !strings.Contains(got, "40") { // days since last visit (400-ish, "40x")
+		t.Fatalf("365+ day callout missing days: %v", e.h.said)
+	}
+	if !e.inPool("anniversary", e.b.vars(dave, "years", "1"), e.h.said[len(e.h.said)-1]) &&
+		!strings.Contains(got, "1 year") {
+		t.Fatalf("first anniversary not announced: %v", e.h.said)
+	}
+	e.logoff(dave)
+	e.h.reset()
+	e.advance(5 * time.Minute)
+	e.login(dave)
+	if strings.Contains(e.said(), "year(s)") {
+		t.Fatalf("anniversary repeated: %v", e.h.said)
+	}
+}
+
+func TestTimeOfDayAndNodeRecord(t *testing.T) {
+	e := newEnv(t)
+	e.b.cfg.RemarkProbability = 1
+	e.clock = time.Date(2026, 10, 7, 2, 30, 0, 0, time.UTC) // 02:30 Wednesday
+	p := keyed("p", "Pat")
+	e.login(p)
+	found := false
+	for _, l := range e.h.said {
+		if e.inPool("remark_late", e.b.vars(p), l) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("late-night remark missing: %v", e.h.said)
+	}
+
+	e.clock = time.Date(2026, 10, 10, 15, 0, 0, 0, time.UTC) // Saturday
+	e.h.reset()
+	q := keyed("q", "Quin")
+	e.login(q)
+	found = false
+	for _, l := range e.h.said {
+		if e.inPool("remark_weekend", e.b.vars(q), l) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("weekend remark missing: %v", e.h.said)
+	}
+
+	// Node record needs a previous record to beat.
+	e.b.cfg.RemarkProbability = 0
+	e.h.reset()
+	for i := 0; i < 3; i++ {
+		e.login(keyed(string(rune('r'+i)), "R"+string(rune('0'+i))))
+	}
+	if !strings.Contains(e.said(), "nodes") && !strings.Contains(e.said(), "users") && !strings.Contains(e.said(), "callers") {
+		t.Fatalf("no node-count record announced: %v", e.h.said)
+	}
+}
+
+func TestFirstMessageReaction(t *testing.T) {
+	e := newEnv(t)
+	a := keyed("a", "Alice")
+	e.login(a)
+	e.h.reset()
+	e.chat(a, "hello world")
+	if len(e.h.said) != 1 || !e.inPool("first_message", e.b.vars(a), e.h.said[0]) {
+		t.Fatalf("want first_message reaction, got %v", e.h.said)
+	}
+	e.h.reset()
+	e.chat(a, "second message")
+	if len(e.h.said) != 0 {
+		t.Fatalf("reacted to a non-first message: %v", e.h.said)
+	}
+}
+
+func TestScheduledPosts(t *testing.T) {
+	e := newEnv(t)
+	e.clock = time.Date(2026, 10, 8, 9, 0, 5, 0, time.UTC)
+	e.b.Tick()
+	if len(e.h.said) != 2 || !strings.Contains(e.h.said[1], "--") {
+		t.Fatalf("daily quote missing: %v", e.h.said)
+	}
+	e.h.reset()
+	e.advance(10 * time.Minute)
+	e.b.Tick()
+	if len(e.h.said) != 0 {
+		t.Fatalf("daily quote repeated: %v", e.h.said)
+	}
+	e.clock = time.Date(2026, 10, 9, 3, 0, 5, 0, time.UTC)
+	e.b.Tick()
+	if len(e.h.said) != 1 || !e.inPool("maintenance", e.b.vars(Person{}), e.h.said[0]) {
+		t.Fatalf("maintenance message missing: %v", e.h.said)
+	}
+	// Restarted late in the day: don't post a stale schedule.
+	e.h.reset()
+	e.clock = time.Date(2026, 10, 10, 18, 0, 0, 0, time.UTC)
+	e.b.Tick()
+	if len(e.h.said) != 0 {
+		t.Fatalf("stale scheduled post: %v", e.h.said)
+	}
+}
+
+func TestTriviaScoring(t *testing.T) {
+	e := newEnv(t)
+	a, b := keyed("a", "Alice"), keyed("b", "Bob")
+	e.login(a)
+	e.login(b)
+	e.chat(a, "x")
+	e.chat(b, "y")
+	e.h.reset()
+
+	e.chat(a, "!trivia")
+	if len(e.h.said) != 2 || !strings.HasPrefix(e.h.said[1], "Q: ") {
+		t.Fatalf("trivia question not asked: %v", e.h.said)
+	}
+	answer := e.b.trivia.q.A[0]
+	e.advance(10 * time.Second)
+	e.h.reset()
+	e.chat(b, "!trivia definitely wrong")
+	if len(e.h.said) != 1 {
+		t.Fatalf("wrong answer should get one reply: %v", e.h.said)
+	}
+	e.advance(5 * time.Second)
+	e.h.reset()
+	e.chat(a, "!trivia  The "+strings.ToUpper(answer)+"!")
+	if e.b.trivia != nil || !strings.Contains(e.said(), "Alice") {
+		t.Fatalf("correct answer not accepted: %v", e.h.said)
+	}
+	top := e.b.st.topScores(5)
+	if len(top) != 1 || top[0].Nick != "Alice" || top[0].Points != 2 {
+		t.Fatalf("scoring wrong (15s => 2 pts): %+v", top)
+	}
+	e.advance(time.Minute)
+	e.h.reset()
+	e.chat(b, "!trivia top")
+	if !strings.Contains(e.said(), "1. Alice - 2 pts") {
+		t.Fatalf("leaderboard wrong: %v", e.h.said)
+	}
+
+	// Timeout reveals the answer; second question while one is live is refused.
+	e.advance(time.Minute)
+	e.chat(a, "!trivia")
+	e.advance(time.Minute)
+	e.chat(b, "!trivia")
+	if e.b.trivia == nil || !strings.Contains(e.said(), "Q:") {
+		t.Fatalf("expected the live question re-announced: %v", e.h.said)
+	}
+	e.advance(61 * time.Second)
+	e.h.reset()
+	e.b.Tick()
+	if e.b.trivia != nil || len(e.h.said) != 1 {
+		t.Fatalf("timeout did not reveal the answer: %v", e.h.said)
+	}
+}
+
+func TestForgetAndRemember(t *testing.T) {
+	e := newEnv(t)
+	a, b := keyed("a", "Alice"), keyed("b", "Bob")
+	e.login(a)
+	e.login(b)
+	e.chat(a, "!trivia")
+	e.chat(a, "!trivia "+e.b.trivia.q.A[0])
+	e.advance(time.Minute)
+	e.chat(b, "!tell Alice hi") // online -> not queued; fine
+	e.advance(time.Minute)
+	e.h.reset()
+	e.chat(a, "!forget")
+	if _, ok := e.b.st.user("SHA256:a"); ok || len(e.b.st.topScores(5)) != 0 {
+		t.Fatal("forget did not erase user data")
+	}
+	e.logoff(a)
+	e.h.reset()
+	e.login(a)
+	if len(e.h.said) != 1 { // entrance only, nothing tracked
+		t.Fatalf("opted-out user should only get the entrance line: %v", e.h.said)
+	}
+	if _, ok := e.b.st.user("SHA256:a"); ok {
+		t.Fatal("opted-out user was tracked again")
+	}
+	e.advance(time.Minute)
+	e.chat(a, "!remember")
+	e.logoff(a)
+	e.login(a)
+	if _, ok := e.b.st.user("SHA256:a"); !ok {
+		t.Fatal("!remember did not resume tracking")
+	}
+	// Anonymous callers: nothing to forget.
+	g := anonP("g", "Ghost")
+	e.login(g)
+	e.advance(time.Minute)
+	e.h.reset()
+	e.chat(g, "!forget")
+	if !e.inPool("forget_anon", e.b.vars(g), e.said()) {
+		t.Fatalf("anon forget reply wrong: %v", e.h.said)
+	}
+}
+
+func TestSeenAndWho(t *testing.T) {
+	e := newEnv(t)
+	a, b := keyed("a", "Alice"), keyed("b", "Bob")
+	e.login(b)
+	e.logoff(b)
+	e.advance(3 * time.Hour)
+	e.login(a)
+	e.chat(a, "x")
+	e.h.reset()
+	e.chat(a, "!seen bob")
+	if !strings.Contains(e.said(), "Bob") || !strings.Contains(e.said(), "3h ago") {
+		t.Fatalf("seen offline wrong: %v", e.h.said)
+	}
+	e.advance(time.Minute)
+	e.h.reset()
+	e.chat(a, "!seen Alice")
+	if !e.inPool("seen_online", e.b.vars(a, "target", "Alice"), e.said()) {
+		t.Fatalf("seen online wrong: %v", e.h.said)
+	}
+	e.advance(time.Minute)
+	e.h.reset()
+	e.chat(a, "!seen nobody")
+	if !e.inPool("seen_unknown", e.b.vars(a, "target", "nobody"), e.said()) {
+		t.Fatalf("seen unknown wrong: %v", e.h.said)
+	}
+}
+
+func TestOutputWrapsAndPaces(t *testing.T) {
+	e := newEnv(t)
+	var slept []time.Duration
+	e.b.sleep = func(d time.Duration) { slept = append(slept, d) }
+	e.b.cfg.TypingIndicator = true
+	e.b.cfg.Baud = 2400
+	e.b.say(kindPlain, strings.Repeat("word ", 60))
+	for _, l := range e.h.said {
+		if len(l) > 80 {
+			t.Fatalf("line over 80 columns: %d", len(l))
+		}
+	}
+	if len(e.h.said) < 3 {
+		t.Fatalf("long text should wrap onto several lines: %v", e.h.said)
+	}
+	if len(e.h.actions) != 1 || !strings.Contains(e.h.actions[0], "typing") {
+		t.Fatalf("typing indicator missing: %v", e.h.actions)
+	}
+	if len(slept) < len(e.h.said)+1 {
+		t.Fatalf("typing delay and baud pacing not applied: %d sleeps for %d lines", len(slept), len(e.h.said))
+	}
+	// Disabled: no delay at all.
+	e2 := newEnv(t)
+	e2.b.cfg.TypingDelayMs = [2]int{0, 0}
+	n := 0
+	e2.b.sleep = func(time.Duration) { n++ }
+	e2.b.say(kindPlain, "hi")
+	if n != 0 || len(e2.h.actions) != 0 {
+		t.Fatalf("delay not disabled: sleeps=%d actions=%v", n, e2.h.actions)
+	}
+}
+
+func TestColourHelperSwitchesOff(t *testing.T) {
+	if colourise(false, kindEvent, "x") != "x" {
+		t.Fatal("colour off must be plain")
+	}
+	if !strings.Contains(colourise(true, kindEvent, "x"), "\x1b[") {
+		t.Fatal("colour on must emit ANSI")
+	}
+	e := newEnv(t)
+	e.b.say(kindEvent, "plain")
+	for _, l := range e.h.said {
+		if strings.ContainsRune(l, 0x1b) {
+			t.Fatalf("default output must be plain text: %q", l)
+		}
+	}
+}
+
+func TestNoRepeatWithinRecentMemory(t *testing.T) {
+	e := newEnv(t)
+	last := []string{}
+	for i := 0; i < 60; i++ {
+		s := e.b.text("login", e.b.vars(keyed("a", "A")))
+		for _, prev := range last {
+			if prev == s {
+				t.Fatalf("variant repeated within recent memory: %q", s)
+			}
+		}
+		last = append(last, s)
+		if len(last) > e.b.cfg.RecentMemory {
+			last = last[1:]
+		}
+	}
+}
+
+func readFile(p string) (string, error) {
+	b, err := osReadFile(p)
+	return string(b), err
+}
+
+var osReadFile = os.ReadFile

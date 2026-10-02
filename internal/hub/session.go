@@ -23,6 +23,8 @@ type Session struct {
 
 	ignored map[string]bool // lowercased nicks whose chat/actions/PMs are hidden (session only)
 
+	everJoined bool
+
 	joinNotice string // set before Join, consumed by Room.handleJoin
 
 	limiter *tokenBucket

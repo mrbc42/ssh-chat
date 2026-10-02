@@ -1,0 +1,130 @@
+[
+ {
+  "q": "What does BBS stand for?",
+  "a": [
+   "bulletin board system",
+   "bulletin board service"
+  ]
+ },
+ {
+  "q": "Which file transfer protocol, written by Chuck Forsberg in 1986, became the BBS download favourite?",
+  "a": [
+   "zmodem"
+  ]
+ },
+ {
+  "q": "What two-letter prefix starts almost every Hayes modem command?",
+  "a": [
+   "at"
+  ]
+ },
+ {
+  "q": "In which US city did Ward Christensen and Randy Suess start the first BBS in 1978?",
+  "a": [
+   "chicago"
+  ]
+ },
+ {
+  "q": "What does FTP stand for?",
+  "a": [
+   "file transfer protocol"
+  ]
+ },
+ {
+  "q": "What does ASCII stand for?",
+  "a": [
+   "american standard code for information interchange"
+  ]
+ },
+ {
+  "q": "How many bits are in a byte?",
+  "a": [
+   "8",
+   "eight"
+  ]
+ },
+ {
+  "q": "Which operating system did Linus Torvalds start writing in 1991?",
+  "a": [
+   "linux"
+  ]
+ },
+ {
+  "q": "In MS-DOS, what does DOS stand for?",
+  "a": [
+   "disk operating system"
+  ]
+ },
+ {
+  "q": "Which 1993 id Software shooter spread as shareware across BBSes?",
+  "a": [
+   "doom"
+  ]
+ },
+ {
+  "q": "Who invented the World Wide Web?",
+  "a": [
+   "tim berners-lee",
+   "berners-lee",
+   "tim berners lee"
+  ]
+ },
+ {
+  "q": "What was the name of the NCSA graphical web browser released in 1993?",
+  "a": [
+   "mosaic",
+   "ncsa mosaic"
+  ]
+ },
+ {
+  "q": "Which BBS software, written by Tom Jennings, gave its name to a famous network?",
+  "a": [
+   "fido",
+   "fidonet"
+  ]
+ },
+ {
+  "q": "What is 2 to the power of 10?",
+  "a": [
+   "1024"
+  ]
+ },
+ {
+  "q": "In hexadecimal, FF equals what decimal number?",
+  "a": [
+   "255"
+  ]
+ },
+ {
+  "q": "PKZIP, the BBS-era archiver, made files with what extension?",
+  "a": [
+   "zip",
+   ".zip"
+  ]
+ },
+ {
+  "q": "What does RAM stand for?",
+  "a": [
+   "random access memory"
+  ]
+ },
+ {
+  "q": "Which Intel processor family launched in 1993 as the successor to the 486?",
+  "a": [
+   "pentium"
+  ]
+ },
+ {
+  "q": "What does GIF stand for?",
+  "a": [
+   "graphics interchange format"
+  ]
+ },
+ {
+  "q": "Which Unix text editor do you quit with :q! ?",
+  "a": [
+   "vi",
+   "vim"
+  ]
+ }
+]

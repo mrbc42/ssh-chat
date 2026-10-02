@@ -1,0 +1,110 @@
+[
+ {
+  "patterns": [
+   "(change|set|pick|choose).*(nick|name)",
+   "\\bnickname\\b",
+   "what.*my (nick|name)"
+  ],
+  "replies": [
+   "Use /nick <name> to change your nickname. 2-24 letters, numbers, dash or underscore.",
+   "/nick <name>. It sticks to your SSH key, so use the same key every time.",
+   "To rename yourself, type /nick <name>. Names are unique, so someone might already have it.",
+   "Nickname: /nick <name>. Keyless callers get a new random name every call.",
+   "/nick <name> changes it. Pick something I can spell."
+  ]
+ },
+ {
+  "patterns": [
+   "(ssh )?key",
+   "passphrase",
+   "identity",
+   "who am i",
+   "remember me",
+   "(lose|lost|forgot).*(name|nick)"
+  ],
+  "replies": [
+   "Your identity is your SSH key. Same key, same name, every time. Keyless callers get a fresh random identity.",
+   "If your key has a passphrase, run ssh-add first. Otherwise you may connect keyless without noticing.",
+   "No key means no memory. I only keep files on people who use an SSH key.",
+   "Use the same SSH key each time and I'll remember you. Without one you're a stranger every call.",
+   "Name keeps changing? You're probably connecting without your key. Check ssh-add."
+  ]
+ },
+ {
+  "patterns": [
+   "(make|create|start|new).*(channel|room)",
+   "\\bchannels?\\b",
+   "\\brooms?\\b"
+  ],
+  "replies": [
+   "Use /create <name> to make a channel and /join <name> to enter one. /list shows them all.",
+   "Channels: /list, /join <name>, /create <name>, /leave to come back to #main.",
+   "To start a room, /create <name>. You're the owner, so behave.",
+   "/join <name> hops channels. /leave brings you back to #main.",
+   "You can make your own channel with /create <name>. I only watch #main."
+  ]
+ },
+ {
+  "patterns": [
+   "private (message|msg)",
+   "\\bpm\\b",
+   "whisper",
+   "(ignore|block|mute).*(user|someone|him|her|them)?",
+   "\\bignore\\b"
+  ],
+  "replies": [
+   "Private messages: /msg <user> <text>. To mute someone for this session, /ignore <user>.",
+   "/ignore <user> hides their chat for the session. /unignore undoes it.",
+   "Whisper with /msg <user> <message>. /ignore <user> if they're a pest.",
+   "For a private chat, /msg <user> <text>. For peace and quiet, /ignore <user>.",
+   "PMs: /msg. Pests: /ignore. That's the whole toolbox."
+  ]
+ },
+ {
+  "patterns": [
+   "who('s| is) (the )?(sysop|admin|owner)",
+   "\\bsysop\\b",
+   "\\badmin\\b",
+   "report",
+   "abuse"
+  ],
+  "replies": [
+   "I'm the SysOp. For real problems use /admin <message> to alert a human administrator.",
+   "Trouble? /admin <message> pings a real administrator. I just moan about it.",
+   "The SysOp is me. The administrators are the humans behind me. /admin reaches them.",
+   "Report abuse with /admin <message>. It's logged even if nobody's around.",
+   "Need a human? /admin <message>. I'm just the voice."
+  ]
+ },
+ {
+  "patterns": [
+   "(upload|download)",
+   "\\bfiles?\\b",
+   "\\bdoors?\\b",
+   "\\bgames?\\b",
+   "\\bzmodem\\b",
+   "\\bratio\\b"
+  ],
+  "replies": [
+   "No files, no doors, no ratios. It's a chat board. Type something.",
+   "We don't do uploads or downloads here. Just talk. Sorry, 1994 is over.",
+   "No file area. No door games. Trivia is the only game. !trivia.",
+   "Files? Doors? Ratios? Not here. It's chat only.",
+   "Chat is the only service. The rest burned down with the hard drive."
+  ]
+ },
+ {
+  "patterns": [
+   "(how|way).*(quit|exit|leave|log ?off|disconnect)",
+   "\\bbye\\b",
+   "\\blogout\\b"
+  ],
+  "replies": [
+   "Type /quit to hang up. Or close the terminal. I'll announce it either way.",
+   "/quit disconnects you. /leave only leaves the channel.",
+   "To log off, /quit. Don't just stare at me.",
+   "Hang up with /quit. I'll tell everyone you dropped carrier.",
+   "/quit, then walk away from the screen. Fresh air is good for you."
+  ]
+ }
+]

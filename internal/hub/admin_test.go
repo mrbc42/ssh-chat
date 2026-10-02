@@ -216,3 +216,73 @@ func TestAfkThresholdConfigurable(t *testing.T) {
 		t.Fatal("not marked away after custom threshold")
 	}
 }
+
+// helpText runs /help and returns the whole listing.
+func helpText(t *testing.T, h *Hub, s *Session) string {
+	t.Helper()
+	drain(s)
+	HandleInput(context.Background(), h, s, "/help")
+	var b strings.Builder
+	for {
+		select {
+		case o := <-s.Outbox:
+			if o.Line != nil && o.Line.Kind == KindInfo {
+				b.WriteString(o.Line.Body + "\n")
+			}
+		case <-time.After(400 * time.Millisecond):
+			return b.String()
+		}
+	}
+}
+
+func TestHelpListsOnlyUsableCommands(t *testing.T) {
+	h, _ := adminHub(t)
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	user := NewSession("SHA256:user", "8.8.8.8", "plain")
+	h.Main().Join(admin)
+	h.Main().Join(user)
+
+	adminOnly := []string{"/gban", "/gunban", "/gbans", "/delroom", "/adminlog", "/broadcast"}
+	opOnly := []string{"/kick", "/ban", "/lock", "/topic", "/op ", "/announce"}
+
+	// Plain user in #main: no admin commands, no operator commands.
+	got := helpText(t, h, user)
+	for _, c := range append(adminOnly, opOnly...) {
+		if strings.Contains(got, c) {
+			t.Errorf("plain user's /help lists %q:\n%s", strings.TrimSpace(c), got)
+		}
+	}
+	for _, c := range []string{"/help", "/nick", "/msg", "/me ", "/ignore", "/clear", "/time", "/quit"} {
+		if !strings.Contains(got, c) {
+			t.Errorf("plain user's /help is missing %q", strings.TrimSpace(c))
+		}
+	}
+
+	// Admin sees admin commands.
+	got = helpText(t, h, admin)
+	for _, c := range adminOnly {
+		if !strings.Contains(got, c) {
+			t.Errorf("admin's /help is missing %q", c)
+		}
+	}
+
+	// The owner of a channel sees operator commands there; others in it do not.
+	_ = info(t, h, user, "/create mine")
+	time.Sleep(200 * time.Millisecond)
+	got = helpText(t, h, user)
+	for _, c := range []string{"/kick", "/lock", "/topic", "/op "} {
+		if !strings.Contains(got, c) {
+			t.Errorf("channel owner's /help is missing %q", strings.TrimSpace(c))
+		}
+	}
+	for _, c := range adminOnly {
+		if strings.Contains(got, c) {
+			t.Errorf("owner (non-admin) sees admin command %q", c)
+		}
+	}
+	_ = info(t, h, admin, "/join mine")
+	time.Sleep(200 * time.Millisecond)
+	if got = helpText(t, h, admin); strings.Contains(got, "/kick") {
+		t.Errorf("non-operator in someone else's channel sees /kick")
+	}
+}

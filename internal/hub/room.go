@@ -158,6 +158,12 @@ func (r *Room) run() {
 				}
 			}
 			e.respond <- found
+		case evSessions:
+			all := make([]*Session, 0, len(r.members))
+			for sess := range r.members {
+				all = append(all, sess)
+			}
+			e.respond <- all
 		case evFindAdmins:
 			var found []*Session
 			for sess := range r.members {
@@ -205,6 +211,9 @@ func (r *Room) handleJoin(ctx context.Context, sess *Session) {
 		r.persistSystem(ctx, text)
 		r.broadcastExcept(sess, systemLine(text))
 	}
+	if o := r.hub.observer; o != nil {
+		o.OnJoin(r.Name, sess, sess.markJoined())
+	}
 }
 
 func (r *Room) handlePart(ctx context.Context, sess *Session, reason partReason) {
@@ -212,6 +221,9 @@ func (r *Room) handlePart(ctx context.Context, sess *Session, reason partReason)
 		return
 	}
 	delete(r.members, sess)
+	if o := r.hub.observer; o != nil {
+		defer o.OnPart(r.Name, sess, reason == partReasonDisconnect)
+	}
 	if !r.announce {
 		return
 	}
@@ -232,6 +244,9 @@ func (r *Room) handleChat(ctx context.Context, sess *Session, body string) {
 	m := store.Message{ChannelID: r.ID, SenderFP: sess.FP, SenderName: sess.Nick(), Body: body, Kind: "msg"}
 	_, _ = r.store.AppendMessage(ctx, m)
 	r.broadcastAll(chatLine(sess.Nick(), body))
+	if o := r.hub.observer; o != nil {
+		o.OnChat(r.Name, sess, body, false)
+	}
 }
 
 // handleShutdown evicts every member into #main with an explanation; the
@@ -251,6 +266,9 @@ func (r *Room) handleAction(ctx context.Context, sess *Session, body string) {
 	m := store.Message{ChannelID: r.ID, SenderFP: sess.FP, SenderName: sess.Nick(), Body: body, Kind: "action"}
 	_, _ = r.store.AppendMessage(ctx, m)
 	r.broadcastAll(actionLine(sess.Nick(), body))
+	if o := r.hub.observer; o != nil {
+		o.OnChat(r.Name, sess, body, true)
+	}
 }
 
 func (r *Room) handleForceRemove(ctx context.Context, target *Session, broadcastText, targetText string) {

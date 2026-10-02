@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mrbc42/ssh-chat/internal/bot"
 	"github.com/mrbc42/ssh-chat/internal/filter"
 	"github.com/mrbc42/ssh-chat/internal/hub"
 	"github.com/mrbc42/ssh-chat/internal/sshserver"
@@ -31,6 +32,9 @@ func main() {
 	backupDir := flag.String("backup-dir", "", "directory for periodic database backups (default: <db dir>/backups; \"off\" disables)")
 	backupEvery := flag.Duration("backup-every", 24*time.Hour, "how often to back up the database")
 	backupKeep := flag.Int("backup-keep", 7, "how many database backups to keep")
+	botOn := flag.Bool("bot", true, "run the SysOp-Gus chat bot in #main")
+	botData := flag.String("bot-data", "", "optional directory of bot data files overriding the built-in persona/content")
+	botDB := flag.String("bot-db", "", "bot SQLite database (default: <db dir>/bot.db)")
 	roomExpiry := flag.Duration("room-expiry", 30*24*time.Hour, "delete empty channels idle this long (0 disables)")
 	flag.Parse()
 
@@ -69,6 +73,21 @@ func main() {
 			dir = filepath.Join(dirOf(*dbPath), "backups")
 		}
 		go runBackups(bg, st, dir, filepath.Dir(*hostKeyPath), *backupEvery, *backupKeep)
+	}
+	if *botOn {
+		botPath := *botDB
+		if botPath == "" {
+			botPath = filepath.Join(dirOf(*dbPath), "bot.db")
+		}
+		nick, err := bot.Start(bg, h, st, bot.Options{
+			DBPath:        botPath,
+			UnmatchedPath: filepath.Join(filepath.Dir(botPath), "unmatched.log"),
+			DataDir:       *botData,
+		})
+		if err != nil {
+			log.Fatalf("starting bot: %v", err)
+		}
+		log.Printf("bot %s is in #main (db=%s)", nick, botPath)
 	}
 	if *roomExpiry > 0 {
 		go runRoomExpiry(bg, h, *roomExpiry)

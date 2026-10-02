@@ -1,0 +1,78 @@
+[
+ {
+  "date": "02-14",
+  "text": "1946: ENIAC, one of the first general-purpose electronic computers, was unveiled to the public."
+ },
+ {
+  "date": "06-21",
+  "text": "1948: The Manchester Baby ran the first program stored in electronic memory."
+ },
+ {
+  "date": "09-09",
+  "text": "1947: A moth found in Harvard's Mark II relay gave 'debugging' its most famous logbook entry."
+ },
+ {
+  "date": "10-29",
+  "text": "1969: The first ARPANET message was sent from UCLA to SRI. It was meant to say 'LOGIN' and crashed after 'LO'."
+ },
+ {
+  "date": "12-09",
+  "text": "1968: Douglas Engelbart demonstrated the mouse, hypertext and video conferencing in 'the Mother of All Demos'."
+ },
+ {
+  "date": "11-03",
+  "text": "1971: The first edition of the Unix Programmer's Manual was published."
+ },
+ {
+  "date": "05-22",
+  "text": "1973: Bob Metcalfe wrote the memo that described Ethernet."
+ },
+ {
+  "date": "04-04",
+  "text": "1975: Microsoft was founded in Albuquerque by Bill Gates and Paul Allen."
+ },
+ {
+  "date": "04-01",
+  "text": "1976: Apple Computer was founded by Steve Jobs, Steve Wozniak and Ronald Wayne."
+ },
+ {
+  "date": "08-12",
+  "text": "1981: IBM introduced the IBM Personal Computer, model 5150."
+ },
+ {
+  "date": "01-01",
+  "text": "1983: ARPANET switched to TCP/IP, the foundation of today's Internet."
+ },
+ {
+  "date": "01-24",
+  "text": "1984: Apple introduced the Macintosh."
+ },
+ {
+  "date": "11-20",
+  "text": "1985: Microsoft released Windows 1.0."
+ },
+ {
+  "date": "03-12",
+  "text": "1989: Tim Berners-Lee circulated his proposal for what became the World Wide Web."
+ },
+ {
+  "date": "08-06",
+  "text": "1991: The first public web site, info.cern.ch, went live."
+ },
+ {
+  "date": "08-25",
+  "text": "1991: Linus Torvalds announced his hobby operating system, later named Linux."
+ },
+ {
+  "date": "04-22",
+  "text": "1993: NCSA released Mosaic 1.0."
+ },
+ {
+  "date": "12-10",
+  "text": "1993: id Software released Doom as shareware."
+ },
+ {
+  "date": "08-24",
+  "text": "1995: Microsoft released Windows 95."
+ }
+]

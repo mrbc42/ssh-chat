@@ -1,0 +1,451 @@
+{
+ "motd": "Welcome to Gus's Garage BBS. The coffee is cold, the rules are firm, and the SysOp is right.",
+ "rules": [
+  "1. Be civil. I'm the only one allowed to be grumpy.",
+  "2. No flooding, spamming, or begging the modem pool for mercy.",
+  "3. Keep it legal. The phone company already hates me.",
+  "4. Respect other callers. If not, /ignore works, and so does the exit.",
+  "5. The SysOp's word is final. See rule 1."
+ ],
+ "pools": {
+  "login": [
+   "{nick} has entered the building.",
+   "{nick} just connected. Node's warm, try not to break it.",
+   "Carrier detected. It's {nick}.",
+   "{nick} logged on. Line noise is down 3%, coincidence.",
+   "Ring ring. {nick} on line one.",
+   "{nick} is online. Somebody tell the other users to act natural.",
+   "Another caller: {nick}. The modem pool was getting lonely.",
+   "{nick} has connected at what I'm assuming is a respectable baud rate."
+  ],
+  "logoff": [
+   "{nick} dropped carrier.",
+   "{nick} has left the building. Lights stay on, I pay the bill.",
+   "{nick} hung up. Click.",
+   "Lost carrier: {nick}. Probably a phone call. Probably.",
+   "{nick} logged off without saying goodbye. Typical.",
+   "{nick} is gone. Somebody pick up the empty chair.",
+   "{nick} disconnected. Hope the call waiting wasn't Mom again."
+  ],
+  "greet_first": [
+   "Welcome to {board}, {nick}. First time? Read !rules, then try not to break anything.",
+   "New caller. {nick}, I'm the SysOp. Type !help and don't touch the thermostat.",
+   "A fresh face. Welcome, {nick}. I log everything, so behave.",
+   "{nick}, never seen you before. Welcome. Rule one: I'm always right. See !rules for rule two.",
+   "First-timer {nick} detected. Take a seat, the chat's free and so is the advice.",
+   "Welcome, {nick}. This is {board}. Not much has changed since 1994 and I intend to keep it that way.",
+   "New user {nick}. I'd say welcome but I haven't decided if I like you yet.",
+   "Hello, {nick}. You found us. Most people don't. Type !help."
+  ],
+  "greet_returning": [
+   "Welcome back, {nick}. It's been {days} days. I kept your seat warm. Mostly.",
+   "{nick}! {days} days since your last call. The board survived. Barely.",
+   "Look who's back. {days} days, {nick}. Did you lose the number?",
+   "{nick} returns after {days} days. Please don't tell me you've been on a competitor's board.",
+   "Welcome back, {nick}. {days} days away. Not that I was counting. I was counting.",
+   "Ah, {nick}. {days} days. I was about to delete your account. Joking. Maybe.",
+   "{days} days, {nick}. Your absence was noted and filed under 'peace and quiet'.",
+   "Back again, {nick}. {days} days between calls. Persistence, or poor planning?"
+  ],
+  "greet_returning_today": [
+   "Back so soon, {nick}? Fine. Sit.",
+   "{nick} again. Twice in one day. Somebody's lonely.",
+   "Welcome back, {nick}. Same day. Must be good here.",
+   "{nick}, you're a regular. That's a compliment. Barely.",
+   "Round two, {nick}. I'll put the kettle on. I don't have a kettle.",
+   "{nick} returns. The board missed you for about an hour."
+  ],
+  "greet_rapid": [
+   "{nick}, that was quick. Did the modem sneeze?",
+   "Dropped carrier and straight back, {nick}. Line noise again?",
+   "{nick} reconnected in record time. Somebody's phone line needs a talking-to.",
+   "That redial was fast, {nick}. Do you have the number on speed dial?",
+   "Back already, {nick}? Check your cable. I'll wait.",
+   "{nick} bounced off the line and right back on. Call waiting strikes again."
+  ],
+  "greet_anon": [
+   "{nick}, no key, no memory. I won't remember you tomorrow. Use the same SSH key every time.",
+   "Keyless caller. Fine, {nick}, but I'll forget you the second you hang up.",
+   "Welcome, stranger. Without an SSH key I can't keep a file on you. Your loss.",
+   "{nick}, you came in anonymous. Nothing wrong with that, but nothing gets saved either.",
+   "No key detected, {nick}. If it has a passphrase, run ssh-add first.",
+   "Anonymous user {nick}. I don't do names without keys. Welcome anyway."
+  ],
+  "absence_30": [
+   "{nick}, {days} days. A month. Where have you been, a better board?",
+   "Well, well. {nick} returns after {days} days. The prodigal caller.",
+   "{days} days, {nick}. I almost archived your account.",
+   "{nick} is back after {days} days. Dust off the keyboard.",
+   "A whole {days} days without a call from {nick}. I assumed the worst. Welcome back."
+  ],
+  "absence_90": [
+   "{nick}! {days} days. I'd started to think you'd moved on to the Internet.",
+   "{days} days, {nick}. That's a quarter of a year. We changed the carpet.",
+   "Look what the modem dragged in. {nick}, {days} days gone.",
+   "{nick} returns after {days} days. Entire seasons have passed.",
+   "{days} days, {nick}. Your mailbox is full of cobwebs."
+  ],
+  "absence_365": [
+   "{nick}. {days} days. Over a year. I'd put out a missing-persons notice but I don't have a printer.",
+   "Welcome back, {nick}, after {days} days. Some of us have been here the whole time. Some of us.",
+   "{nick} is back after more than a year. Somebody call the newspapers.",
+   "{days} days, {nick}. I had to dig your account out of the archive.",
+   "A year-plus away, {nick}. The board has new rules. They're the old rules but louder."
+  ],
+  "milestone_caller": [
+   "Caller number {n}, and it's {nick}. Congratulations. You win nothing.",
+   "{nick} is caller #{n}! There's no prize. There never is.",
+   "Milestone: call #{n} to {board}, courtesy of {nick}. Mark the calendar.",
+   "Caller #{n}! {nick}, the SysOp salutes you with an unused sticker.",
+   "Ding. {nick} is caller {n}. Don't let it go to your head.",
+   "Call number {n} goes to {nick}. The board thanks you. I thank you. Barely."
+  ],
+  "milestone_visit": [
+   "{nick}, that's visit number {n}. You're either loyal or lost.",
+   "Visit #{n} for {nick}. I should charge rent.",
+   "{nick} has now called {n} times. A true regular.",
+   "{n} visits, {nick}. At this point you may as well pay for the phone line.",
+   "Visit {n} from {nick}. I'm told this is an achievement.",
+   "{nick}'s {n}th call. Thanks for keeping the lights on."
+  ],
+  "anniversary": [
+   "{nick}, you've been a member for {years} year(s) today. Happy anniversary. No cake.",
+   "Anniversary alert: {nick} first called {years} year(s) ago. Time flies when the modem's busy.",
+   "{years} year(s) on {board} for {nick}. That deserves at least a nod. *nod*",
+   "{nick}: {years} year(s) since your first call. You're practically furniture.",
+   "Congratulations, {nick}. {years} year(s) on this board. You must really like it. Or can't read the exit sign.",
+   "{years} year(s) ago {nick} dialed in for the first time. I'd have said something, but I was busy."
+  ],
+  "remark_late": [
+   "{nick}, it's the middle of the night. Don't you have a bed?",
+   "Calling at this hour, {nick}? The phone company thanks you for the cheap rates.",
+   "Late-night caller {nick}. Either insomnia or deadlines.",
+   "It's the small hours, {nick}. Nothing good happens on a BBS after 2am. Welcome.",
+   "{nick}, the real SysOps are up at this hour. And the unlucky ones.",
+   "Night owl detected: {nick}. The line's quieter now anyway."
+  ],
+  "remark_early": [
+   "Up early, {nick}? The modem's barely awake.",
+   "Early caller {nick}. Coffee first, then chat.",
+   "{nick}, before breakfast? That's dedication. Or a long night.",
+   "Dawn patrol: {nick} is on the line. I hadn't finished my toast.",
+   "{nick} checking in before the world wakes up. I respect it."
+  ],
+  "remark_weekend": [
+   "Weekend caller {nick}. Nothing better to do, or everything better?",
+   "It's the weekend, {nick}. The phone rates are cheap and the chat is slow.",
+   "Weekend warrior {nick} is online. Take a seat.",
+   "{nick} on a weekend. Admirable. Or sad. Hard to tell.",
+   "Saturday-or-Sunday crowd. Hello, {nick}. Mind the noise.",
+   "A weekend call from {nick}. The SysOp approves of misspent leisure."
+  ],
+  "lonely": [
+   "Just the two of us, then. Me and the dial tone.",
+   "Quiet in here. It's me and one lonely user.",
+   "One caller online. I've seen busier cemeteries.",
+   "Nobody here but us. Pull up a chair, I've got jokes.",
+   "It's very quiet. Even the modem's yawning.",
+   "Only one soul online. I'm not offended. I'm a little offended."
+  ],
+  "idle_intro": [
+   "Quiet in here. Allow me to fill the silence.",
+   "Dead air. Time for something from the archives.",
+   "Nobody's talking. Here's something to ignore.",
+   "While the line's idle, a word from the SysOp:",
+   "Silence is golden, but it's also boring. Behold:",
+   "The room's gone quiet. Enjoy this public service announcement:"
+  ],
+  "tell_stored": [
+   "Message saved for {target}. They'll get it next time they call.",
+   "Noted. {target} gets your message at their next login.",
+   "I've stuck your note up for {target}. They'll see it when they call.",
+   "Stored. {target} will be told. That's my job, apparently.",
+   "Message queued for {target}. Delivery's at next login. Don't ask me to rush it.",
+   "Done. {target}'s mailbox now has your message in it."
+  ],
+  "tell_online": [
+   "{target} is online right now. Just talk to them, {nick}.",
+   "{target} is right here. Say it to their face. Well, screen.",
+   "No need for a message, {nick}. {target} is on the line.",
+   "{target}'s online. I'm a SysOp, not a go-between.",
+   "{nick}, {target} is logged in. Try talking. It's a chat server."
+  ],
+  "tell_unknown": [
+   "Never heard of {target}. Spell it right, or they've never called.",
+   "No record of a {target}. I can only leave notes for callers I know.",
+   "I don't know any {target}. I can't deliver to a ghost.",
+   "{target}? Not in my files. Check the spelling.",
+   "Can't find {target}. Either they're anonymous or they've never called."
+  ],
+  "tell_self": [
+   "Leaving yourself a note, {nick}? I can't help your memory.",
+   "You can't !tell yourself. Write it on your hand.",
+   "{nick}, that's you. Or me. Either way, no.",
+   "Talking to yourself is a free feature. Saves postage.",
+   "I won't deliver mail to the same person who sent it. Rules are rules."
+  ],
+  "tell_full": [
+   "{target}'s mailbox is full. They need to call more often.",
+   "Too many notes waiting for {target}. Try again after they log in.",
+   "{target} already has a stack of messages. I'm not a landfill.",
+   "Can't take more for {target}. Their mailbox is full.",
+   "{target} has the maximum messages waiting. Wait until they call."
+  ],
+  "tell_limit": [
+   "You've got too many notes waiting already, {nick}. Let some get delivered first.",
+   "{nick}, that's enough mail for now. I'm not a post office.",
+   "Slow down, {nick}. You've hit your pending-message limit.",
+   "Limit reached. Come back after your earlier notes are delivered.",
+   "{nick}, I only hold so many of your messages. Wait for some to go out."
+  ],
+  "tell_usage": [
+   "Usage: !tell <user> <message>. Even I can read minds only so far.",
+   "I need a name and a message. !tell <user> <message>.",
+   "!tell <user> <message>. That's the whole spec, {nick}.",
+   "Try again: !tell <user> <message>. Both parts, please.",
+   "{nick}, give me a user and a message. !tell <user> <message>."
+  ],
+  "tell_need_key": [
+   "I only handle mail for callers with an SSH key, {nick}. Otherwise I'd never know who you are.",
+   "No key, no mail service. Use the same SSH key each time and I'll hold your notes.",
+   "{nick}, !tell needs an SSH key so I can tell who's who. You're anonymous.",
+   "Keyless callers can't leave messages. Sorry. Policy.",
+   "I can't send or receive notes without knowing who you are. Log in with a key."
+  ],
+  "tell_deliver": [
+   "Message from {from} ({ago}): {msg}",
+   "You've got mail from {from}, left {ago}: {msg}",
+   "{from} left this for you {ago}: {msg}",
+   "Delivery! {from} wrote, {ago}: {msg}",
+   "Note from {from} ({ago}): {msg}",
+   "While you were away, {from} said ({ago}): {msg}"
+  ],
+  "first_message": [
+   "{nick} said their first words here. Frame it.",
+   "First message from {nick}. Welcome to the conversation.",
+   "{nick}'s first post. I'll mark the occasion with a nod.",
+   "Look, {nick} finally spoke. I was starting to worry.",
+   "First words logged for {nick}. Don't make them your last.",
+   "{nick} has broken the seal. Their first message is in the books.",
+   "Noted: {nick}'s inaugural message. Historic. Barely."
+  ],
+  "node_record": [
+   "New record: {n} nodes online. I'm going to need a bigger fuse box.",
+   "{n} users online at once, a new record. Everybody behave.",
+   "Record busy: {n} nodes on the line. The phone company's going to call me.",
+   "Busiest the board has been: {n} users. I'm choosing to be proud.",
+   "{n} nodes online. New record. Somebody's been telling friends.",
+   "A new high of {n} callers at once. Please stop breathing on the modem."
+  ],
+  "quote_intro": [
+   "Today's quote from the SysOp's dusty files:",
+   "Quote of the day, because someone has to:",
+   "Daily wisdom, free of charge:",
+   "Your daily quote. Try not to waste it:",
+   "From the archive, the quote of the day:",
+   "Time for the daily quote. Hold your applause:"
+  ],
+  "maintenance": [
+   "NOTICE: nightly maintenance. Compacting the message base. If anything squeals, ignore it.",
+   "Nightly maintenance: defragmenting the hard drive. This may take a moment. Or forever.",
+   "It's maintenance o'clock. Checking the disk, rotating logs, pretending to be busy.",
+   "Maintenance window: please keep your hands inside the modem at all times.",
+   "Running nightly maintenance. Do not unplug the board. This means you.",
+   "Time for the nightly backup. Tape's in. Fingers crossed.",
+   "Maintenance in progress. If the chat hiccups, blame the drive, not me."
+  ],
+  "fallback": [
+   "Didn't catch that, {nick}. Try !help.",
+   "I only understand a few things. !help lists them.",
+   "That's not in my manual. Try !help, {nick}.",
+   "Say again? Or just type !help and stop confusing me.",
+   "No idea what you mean, {nick}. !help, perhaps.",
+   "I'm a SysOp, not a mind reader. !help.",
+   "Garbled transmission. Try !help."
+  ],
+  "rate_limited": [
+   "Easy, {nick}. One request at a time. I'm not a call center.",
+   "Slow down, {nick}. You're hogging the line.",
+   "Too many requests, {nick}. Give it a minute.",
+   "Whoa. Cool it, {nick}. I'm busy ignoring you politely.",
+   "{nick}, ask less often. The modem's smoking."
+  ],
+  "help_intro": [
+   "Commands, {nick}. I take them seriously, so should you:",
+   "Here's what I'll answer to, {nick}:",
+   "The SysOp's menu, {nick}:",
+   "Fine, here are my commands:",
+   "You asked. Here's the list:"
+  ],
+  "roll_result": [
+   "{nick} rolls {expr}: {rolls} = {total}.",
+   "{expr} for {nick}: {rolls} = {total}. The dice have spoken.",
+   "{nick}'s {expr}: {total} ({rolls}).",
+   "Rolling {expr} for {nick}... {total}. ({rolls})",
+   "{expr}: {total}. That's {nick}'s fate. ({rolls})"
+  ],
+  "roll_bad": [
+   "Roll like this: !roll 2d6. Up to 20 dice, 1000 sides.",
+   "That's not a die roll. Try !roll NdM, like !roll 3d8.",
+   "NdM, {nick}. Number of dice, d, number of sides. Keep it sane.",
+   "Can't parse that. !roll 1d20, for example.",
+   "I roll NdM only, up to 20 dice and 1000 sides. Behave."
+  ],
+  "time_reply": [
+   "The time is {time}. I checked the wall clock. It was fast.",
+   "Server time: {time}. Don't be late.",
+   "{time}. That's the board's time, {nick}.",
+   "It's {time} here. Yours may vary.",
+   "{time}. Don't blame me if it's wrong."
+  ],
+  "who_reply": [
+   "{count} online: {list}. A full house, as far as I'm concerned.",
+   "Currently on the line ({count}): {list}.",
+   "Callers online ({count}): {list}.",
+   "{count} connected: {list}. I'm keeping an eye on all of them.",
+   "On the board now ({count}): {list}."
+  ],
+  "who_empty": [
+   "Nobody else is online. Just me and the hum of the fan.",
+   "I'm the only one here. Peaceful.",
+   "No callers right now. Silence.",
+   "Empty line. Nobody home except the SysOp.",
+   "Zero other users online. Don't look at me like that."
+  ],
+  "seen_online": [
+   "{target} is online right now. Look up.",
+   "{target}? On the line at this very moment.",
+   "They're here. {target} is connected now.",
+   "{target} is currently logged in. Try talking to them.",
+   "Right now, {target} is online. No detective work needed."
+  ],
+  "seen_ago": [
+   "{target} was last seen {ago} ({date}).",
+   "I last saw {target} on {date}, {ago}.",
+   "{target}'s last call was {ago}, on {date}.",
+   "Last I logged, {target} left {ago} ({date}).",
+   "{target}: last seen {ago}. That's {date} by my calendar."
+  ],
+  "seen_unknown": [
+   "Never heard of {target}. No record.",
+   "I've got no file on {target}. Might be anonymous, might be a ghost.",
+   "{target}? Doesn't ring a bell.",
+   "Can't find {target} in my logs.",
+   "No such caller as {target}. Not as far as I know."
+  ],
+  "seen_usage": [
+   "Usage: !seen <user>. I can only look up one name at a time.",
+   "Give me a name: !seen <user>.",
+   "!seen who? Add a nick.",
+   "I need a nickname. !seen <user>.",
+   "Try !seen <user>. Even I can't search for 'nobody'."
+  ],
+  "stats_reply": [
+   "{calls} calls total, {users} known callers, node record {record}, {trivia} trivia questions asked.",
+   "Stats: {calls} calls taken, {users} regulars on file, record {record} users at once, {trivia} trivia questions.",
+   "The board's logged {calls} calls from {users} known callers. Busiest: {record} at once. Trivia asked: {trivia}.",
+   "{calls} calls. {users} callers I know by name. {record} was the most online together. {trivia} trivia rounds.",
+   "By the numbers: {calls} calls, {users} known users, {record} peak nodes, {trivia} trivia questions."
+  ],
+  "motd_intro": [
+   "Message of the day:",
+   "The SysOp's message of the day:",
+   "Today's notice, courtesy of the management:",
+   "MOTD, as requested:",
+   "Here's the message of the day:"
+  ],
+  "rules_intro": [
+   "The rules. Read them or I'll read them to you:",
+   "House rules at {board}:",
+   "The rules, because somebody asked:",
+   "Board rules. Memorise them:",
+   "Rules of the house, {nick}:"
+  ],
+  "trivia_ask": [
+   "Trivia time. You've got {seconds} seconds. Answer with !trivia <answer>.",
+   "Question for the room. {seconds} seconds. !trivia <answer>.",
+   "Pop quiz! {seconds} seconds on the clock. Reply with !trivia <answer>.",
+   "Brain test. {seconds} seconds. Answer by typing !trivia <answer>.",
+   "Trivia round. Answer with !trivia <answer> within {seconds} seconds.",
+   "Here's one for the nerds. {seconds} seconds. !trivia <answer>."
+  ],
+  "trivia_correct": [
+   "Correct, {nick}! '{answer}'. That's {pts} point(s).",
+   "{nick} got it: {answer}. +{pts}.",
+   "Right! {answer}. {pts} point(s) to {nick}.",
+   "{nick} nails it: {answer}. {pts} pts.",
+   "Yes! {answer}. {nick} scores {pts}.",
+   "Correct. {answer}. {pts} for {nick}. Don't get cocky."
+  ],
+  "trivia_wrong": [
+   "Nope, {nick}. Try again.",
+   "Wrong, {nick}. The clock's ticking.",
+   "Not that, {nick}. Guess again.",
+   "Incorrect. Keep trying.",
+   "Close, no. Well, not close. Try again, {nick}."
+  ],
+  "trivia_timeout": [
+   "Time's up. The answer was: {answer}.",
+   "Nobody got it. It was {answer}. Disappointing.",
+   "Out of time. Answer: {answer}.",
+   "Round over. The answer was {answer}. You people.",
+   "No winner. The answer: {answer}."
+  ],
+  "trivia_none": [
+   "There's no question running. Type !trivia to start one.",
+   "No active question. !trivia gets you a new one.",
+   "I haven't asked anything. Start with !trivia.",
+   "Nothing to answer, {nick}. Start a round with !trivia.",
+   "No trivia on right now. !trivia to begin."
+  ],
+  "trivia_already": [
+   "A question is already live. Here it is again:",
+   "Still waiting on an answer to this one:",
+   "One at a time. The current question:",
+   "Question's still open. Once more:",
+   "Don't be greedy. Answer this one first:"
+  ],
+  "trivia_top": [
+   "Trivia leaderboard:",
+   "The leaderboard, such as it is:",
+   "Top trivia players:",
+   "Hall of fame, trivia edition:",
+   "Current standings:"
+  ],
+  "trivia_top_empty": [
+   "Nobody's scored yet. Start with !trivia.",
+   "Leaderboard's empty. Be the first.",
+   "No scores yet. Embarrassing.",
+   "Zero points on the board. Try !trivia.",
+   "Nobody has scored. Shame."
+  ],
+  "trivia_anon": [
+   "No score kept for anonymous callers. Use an SSH key to be on the leaderboard.",
+   "Right, but I can't track points without a key.",
+   "You're anonymous, so no points get saved.",
+   "No key, no score. That's the rule.",
+   "I'd record that but you've no key. Sorry."
+  ],
+  "forget_done": [
+   "Done. I've erased everything I had on you and I won't track you again. Type !remember to change your mind.",
+   "Wiped. Your file's gone and I'll stop tracking you. !remember reverses it.",
+   "Forgotten, {nick}. No visits, no scores, no messages. !remember if you want back in.",
+   "I've deleted your records. I won't keep new ones unless you !remember.",
+   "File shredded, {nick}. Use !remember if you ever want me to track you again."
+  ],
+  "forget_anon": [
+   "I don't keep anything on keyless callers, {nick}. Nothing to forget.",
+   "You're anonymous. There's nothing on file to erase.",
+   "No key, no record, {nick}. Nothing to delete.",
+   "I never knew you in the first place.",
+   "Nothing to forget. Anonymous callers aren't tracked."
+  ],
+  "remember_done": [
+   "Fine. I'll track you again from your next login.",
+   "Opt-in noted. I'll start a new file next time you call.",
+   "Welcome back to the records, {nick}. From your next call.",
+   "Tracking resumes at your next login.",
+   "Done. I'll keep a file again, from the next call."
+  ]
+ }
+}

@@ -22,6 +22,7 @@ type Hub struct {
 	adminFPs  map[string]bool
 	afkAfter  time.Duration
 	filter    *filter.Filter
+	observer  Observer
 
 	mu    sync.RWMutex
 	rooms map[string]*Room // keyed by lowercased channel name

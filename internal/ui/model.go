@@ -115,10 +115,24 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(textinput.Blink, waitForOutbox(m.sess), tickCmd())
 }
 
+// syncPrompt makes the input prompt "<nick>> " in the same colour as the
+// user's name in the chat pane, like a shell prompt, and keeps the input
+// width in step with the (variable-length) prompt. The nick can change at
+// any time via /nick, so this runs on every update and render.
+func (m *Model) syncPrompt() {
+	if m.sess == nil {
+		return
+	}
+	nick := m.sess.Nick()
+	m.textinput.Prompt = nick + "> "
+	m.textinput.PromptStyle = m.sty.NickStyle(nick)
+	m.textinput.Width = max(m.width-lipgloss.Width(m.textinput.Prompt)-1, 1)
+}
+
 func (m *Model) layout() {
 	m.viewport.Width = m.width
 	m.viewport.Height = max(m.height-fixedRows, 1)
-	m.textinput.Width = max(m.width-2, 1)
+	m.syncPrompt()
 	m.viewport.SetContent(renderLines(m.lines, m.sty, m.viewport.Width, m.viewport.Height))
 	m.viewport.GotoBottom()
 }
@@ -133,6 +147,7 @@ func (m *Model) appendLine(line hub.Line) {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.syncPrompt()
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -218,6 +233,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	m.syncPrompt() // on this render's copy: reflects a /nick made since the last update
 	if m.width < minUsableWidth || m.height < minUsableHeight {
 		return m.sty.TooNarrow.Render("Terminal too small. Please resize your window.")
 	}

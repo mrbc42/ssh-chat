@@ -33,6 +33,7 @@ type Command struct {
 	Help      string
 	NeedsOp   bool // owner or operator of the current room required
 	OwnerOnly bool // owner of the current room required
+	AdminOnly bool // server administrator required (hidden from /help for everyone else)
 	Fn        func(c *CmdCtx, args []string) []string
 }
 
@@ -133,7 +134,7 @@ func init() {
 	})
 	register(&Command{
 		Name: "broadcast", Usage: "/broadcast <message>", Help: "(admin) Announce a message to every channel, e.g. for maintenance.",
-		Fn: cmdBroadcast,
+		AdminOnly: true, Fn: cmdBroadcast,
 	})
 	register(&Command{
 		Name: "roll", Usage: "/roll [sides]", Help: "Roll a die; defaults to 6 sides, up to 100.",
@@ -173,23 +174,23 @@ func init() {
 	})
 	register(&Command{
 		Name: "gban", Usage: "/gban <user> [reason]", Help: "(admin) Ban a user from the whole server (by key and IP) and disconnect them.",
-		Fn: cmdGban,
+		AdminOnly: true, Fn: cmdGban,
 	})
 	register(&Command{
 		Name: "gunban", Usage: "/gunban <fingerprint|ip>", Help: "(admin) Lift a server-wide ban; see /gbans for the entries.",
-		Fn: cmdGunban,
+		AdminOnly: true, Fn: cmdGunban,
 	})
 	register(&Command{
 		Name: "gbans", Usage: "/gbans", Help: "(admin) List server-wide bans.",
-		Fn: cmdGbans,
+		AdminOnly: true, Fn: cmdGbans,
 	})
 	register(&Command{
 		Name: "delroom", Usage: "/delroom <channel>", Help: "(admin) Delete a channel; anyone inside is moved to #main.",
-		Fn: cmdDelroom,
+		AdminOnly: true, Fn: cmdDelroom,
 	})
 	register(&Command{
 		Name: "adminlog", Usage: "/adminlog [count]", Help: "(admin) Show recent /admin reports (default 10, max 50).",
-		Fn: cmdAdminLog,
+		AdminOnly: true, Fn: cmdAdminLog,
 	})
 	register(&Command{
 		Name: "quit", Aliases: []string{"exit"}, Usage: "/quit", Help: "Disconnect.",
@@ -208,15 +209,15 @@ func HandleInput(ctx context.Context, h *Hub, sess *Session, line string) {
 
 	// Any submitted line counts as activity and clears away status —
 	// except /afk itself, which sets it right back; without this
-	// exception, going away while already away would announce "no longer
-	// away" immediately followed by "is away" for the same keystroke.
+	// exception, going away while already away would announce "has returned"
+	// immediately followed by "is away" for the same keystroke.
 	isAfkCmd := strings.EqualFold(strings.TrimSpace(line), "/afk")
 	if wasAfk := sess.Touch(); wasAfk && !isAfkCmd {
 		room := sess.CurrentRoom()
 		if room == nil {
 			room = h.Main()
 		}
-		room.Send(evSystem{text: fmt.Sprintf("*** %s is no longer away ***", sess.Nick()), persist: true})
+		room.Send(evSystem{text: fmt.Sprintf("*** %s has returned ***", sess.Nick()), persist: true})
 	}
 
 	if !strings.HasPrefix(line, "/") {
@@ -322,10 +323,37 @@ func posArgs(args []string) []string {
 	return args[:len(args)-1]
 }
 
+// canUse reports whether sess may run cmd right now, so /help lists only
+// what the caller can actually do: admin commands for admins, and
+// operator/owner commands only while in a channel where they hold that role.
+func canUse(c *CmdCtx, cmd *Command) bool {
+	if cmd.AdminOnly {
+		return c.Hub.IsAdmin(c.Sess.FP)
+	}
+	if !cmd.NeedsOp && !cmd.OwnerOnly {
+		return true
+	}
+	room := c.Sess.CurrentRoom()
+	if room == nil || room == c.Hub.Main() {
+		return false
+	}
+	role, _, err := c.Store.IsOwnerOrOp(c.ctx, room.ID, c.Sess.FP)
+	if err != nil {
+		return false
+	}
+	if cmd.OwnerOnly {
+		return role == store.RoleOwner
+	}
+	return role == store.RoleOwner || role == store.RoleOperator
+}
+
 func cmdHelp(c *CmdCtx, _ []string) []string {
 	lines := []string{"Available commands:"}
 	for _, name := range orderedNames {
 		cmd := registry[name]
+		if !canUse(c, cmd) {
+			continue
+		}
 		lines = append(lines, fmt.Sprintf("  %-22s %s", cmd.Usage, cmd.Help))
 	}
 	return lines
@@ -757,7 +785,7 @@ func cmdFlip(c *CmdCtx, _ []string) []string {
 
 func cmdAfk(c *CmdCtx, _ []string) []string {
 	// HandleInput's Touch() already cleared any prior away status before
-	// dispatching here (and suppressed its own "no longer away"
+	// dispatching here (and suppressed its own "has returned"
 	// announcement for this exact command), so this always marks away
 	// fresh — no branching on prior state needed.
 	c.Sess.SetAfk(true)
