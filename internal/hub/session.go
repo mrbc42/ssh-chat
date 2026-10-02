@@ -1,6 +1,8 @@
 package hub
 
 import (
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,6 +20,10 @@ type Session struct {
 	currentRoom  *Room
 	afk          bool
 	lastActivity time.Time
+
+	ignored map[string]bool // lowercased nicks whose chat/actions/PMs are hidden (session only)
+
+	joinNotice string // set before Join, consumed by Room.handleJoin
 
 	limiter *tokenBucket
 }
@@ -97,6 +103,59 @@ func (s *Session) IdleFor() time.Duration {
 // Allow reports whether the session is within its chat-flood budget.
 func (s *Session) Allow() bool {
 	return s.limiter.allow()
+}
+
+// SetJoinNotice sets a private informational line the room delivers to this
+// session right after its first room switch. It must be set before Join:
+// joining is asynchronous and the room switch clears the UI's scrollback, so
+// a line sent directly would be wiped.
+func (s *Session) SetJoinNotice(text string) { s.joinNotice = text }
+
+// Ignore starts hiding chat, actions and PMs from nick (case-insensitive).
+func (s *Session) Ignore(nick string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ignored == nil {
+		s.ignored = make(map[string]bool)
+	}
+	s.ignored[strings.ToLower(nick)] = true
+}
+
+// Unignore reports whether nick was being ignored.
+func (s *Session) Unignore(nick string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := strings.ToLower(nick)
+	was := s.ignored[k]
+	delete(s.ignored, k)
+	return was
+}
+
+func (s *Session) IgnoredNicks() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.ignored))
+	for n := range s.ignored {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *Session) isIgnoring(nick string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ignored[strings.ToLower(nick)]
+}
+
+// ignoresLine reports whether l is a user-authored line from someone this
+// session is ignoring. System lines and the like are never hidden.
+func (s *Session) ignoresLine(l Line) bool {
+	switch l.Kind {
+	case KindChat, KindAction, KindPM:
+		return l.Sender != "" && s.isIgnoring(l.Sender)
+	}
+	return false
 }
 
 // send delivers an Outbound to this session's UI without blocking the

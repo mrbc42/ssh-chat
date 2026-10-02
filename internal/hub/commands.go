@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mrbc42/ssh-chat/internal/store"
 )
@@ -144,6 +145,26 @@ func init() {
 	register(&Command{
 		Name: "afk", Usage: "/afk", Help: "Mark yourself away; cleared automatically on your next message.",
 		Fn: cmdAfk,
+	})
+	register(&Command{
+		Name: "me", Usage: "/me <action>", Help: "Emote, e.g. /me waves shows \"* nick waves\".",
+		Fn: cmdMe,
+	})
+	register(&Command{
+		Name: "time", Usage: "/time", Help: "Show how long you have been online.",
+		Fn: cmdTime,
+	})
+	register(&Command{
+		Name: "ignore", Usage: "/ignore [user]", Help: "Hide a user's chat, actions and PMs for this session; no argument lists who you ignore.",
+		Fn: cmdIgnore,
+	})
+	register(&Command{
+		Name: "unignore", Usage: "/unignore <user>", Help: "Stop ignoring a user.",
+		Fn: cmdUnignore,
+	})
+	register(&Command{
+		Name: "clear", Usage: "/clear", Help: "Clear your screen.",
+		Fn: cmdClear,
 	})
 	register(&Command{
 		Name: "quit", Aliases: []string{"exit"}, Usage: "/quit", Help: "Disconnect.",
@@ -642,8 +663,12 @@ func cmdMsg(c *CmdCtx, args []string) []string {
 		msg = msg[:maxMessageLen]
 	}
 
-	inLine := pmLine(c.Sess.Nick(), "from", msg)
-	targetSess.send(Outbound{Line: &inLine})
+	// An ignoring recipient silently drops the PM; the sender still sees
+	// their own copy so they aren't tipped off.
+	if !targetSess.isIgnoring(c.Sess.Nick()) {
+		inLine := pmLine(c.Sess.Nick(), "from", msg)
+		targetSess.send(Outbound{Line: &inLine})
+	}
 
 	outLine := pmLine(targetSess.Nick(), "to", msg)
 	c.Sess.send(Outbound{Line: &outLine})
@@ -712,5 +737,72 @@ func cmdAfk(c *CmdCtx, _ []string) []string {
 
 func cmdQuit(c *CmdCtx, _ []string) []string {
 	c.Sess.send(Outbound{Disconnect: true})
+	return nil
+}
+
+func cmdMe(c *CmdCtx, args []string) []string {
+	body := strings.TrimSpace(restArg(args))
+	if body == "" {
+		return []string{"Usage: /me <action>"}
+	}
+	if !c.Sess.Allow() {
+		return []string{"You're sending messages too fast. Slow down."}
+	}
+	if len(body) > maxMessageLen {
+		body = body[:maxMessageLen]
+	}
+	room := c.Sess.CurrentRoom()
+	if room == nil {
+		room = c.Hub.Main()
+	}
+	room.Send(evAction{sess: c.Sess, body: body})
+	return nil
+}
+
+func cmdTime(c *CmdCtx, _ []string) []string {
+	d := time.Since(c.Sess.ConnectedAt).Round(time.Second)
+	h, m, s := int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60
+	var out string
+	switch {
+	case h > 0:
+		out = fmt.Sprintf("%dh %dm %ds", h, m, s)
+	case m > 0:
+		out = fmt.Sprintf("%dm %ds", m, s)
+	default:
+		out = fmt.Sprintf("%ds", s)
+	}
+	return []string{fmt.Sprintf("You have been online for %s.", out)}
+}
+
+func cmdIgnore(c *CmdCtx, args []string) []string {
+	pos := posArgs(args)
+	if len(pos) == 0 {
+		list := c.Sess.IgnoredNicks()
+		if len(list) == 0 {
+			return []string{"You are not ignoring anyone. Usage: /ignore <user>"}
+		}
+		return []string{"Ignoring: " + strings.Join(list, ", ")}
+	}
+	nick := pos[0]
+	if strings.EqualFold(nick, c.Sess.Nick()) {
+		return []string{"You can't ignore yourself."}
+	}
+	c.Sess.Ignore(nick)
+	return []string{fmt.Sprintf("Ignoring %s for the rest of this session. Use /unignore %s to undo.", nick, nick)}
+}
+
+func cmdUnignore(c *CmdCtx, args []string) []string {
+	pos := posArgs(args)
+	if len(pos) == 0 {
+		return []string{"Usage: /unignore <user>"}
+	}
+	if !c.Sess.Unignore(pos[0]) {
+		return []string{fmt.Sprintf("You were not ignoring %s.", pos[0])}
+	}
+	return []string{fmt.Sprintf("No longer ignoring %s.", pos[0])}
+}
+
+func cmdClear(c *CmdCtx, _ []string) []string {
+	c.Sess.send(Outbound{Clear: true})
 	return nil
 }

@@ -50,7 +50,17 @@ type Model struct {
 	// ambiguous command prefix; cleared on any other keypress.
 	tabMatches []string
 	tabIndex   int
+
+	// Up/Down input history, like a shell: history holds what this user
+	// has submitted (oldest first); histPos indexes into it while browsing
+	// and equals len(history) when not browsing. draft keeps the
+	// half-typed line so Down past the newest entry restores it.
+	history []string
+	histPos int
+	draft   string
 }
+
+const maxHistory = 100
 
 func NewModel(ctx context.Context, h *hub.Hub, sess *hub.Session, renderer *lipgloss.Renderer, width, height int) Model {
 	sty := newStyles(renderer)
@@ -146,7 +156,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ob.Disconnect {
 			return m, tea.Quit
 		}
-		if ob.SwitchRoom != nil {
+		if ob.Clear {
+			m.lines = nil
+			m.layout()
+		} else if ob.SwitchRoom != nil {
 			m.roomInfo = *ob.SwitchRoom
 			m.lines = append([]hub.Line{}, ob.Scrollback...)
 			m.layout()
@@ -182,10 +195,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab":
 			m.completeCommand()
 			return m, nil
+		case "up":
+			m.historyPrev()
+			return m, nil
+		case "down":
+			m.historyNext()
+			return m, nil
 		case "enter":
 			value := m.textinput.Value()
 			m.textinput.Reset()
 			if value != "" {
+				m.addHistory(value)
 				hub.HandleInput(m.ctx, m.h, m.sess, value)
 			}
 			return m, nil
@@ -232,7 +252,7 @@ func (m Model) View() string {
 // messages, join/leave chatter, or command feedback.
 func shouldBeep(l hub.Line, myNick string) bool {
 	switch l.Kind {
-	case hub.KindChat:
+	case hub.KindChat, hub.KindAction:
 		return l.Sender != myNick
 	case hub.KindPM:
 		return l.Dir == "from"
@@ -281,6 +301,42 @@ func (m *Model) completeCommand() {
 	m.setCompletion(matches[0])
 }
 
+func (m *Model) addHistory(value string) {
+	if n := len(m.history); n == 0 || m.history[n-1] != value {
+		m.history = append(m.history, value)
+		if len(m.history) > maxHistory {
+			m.history = m.history[len(m.history)-maxHistory:]
+		}
+	}
+	m.histPos = len(m.history)
+	m.draft = ""
+}
+
+func (m *Model) historyPrev() {
+	if m.histPos == 0 {
+		return
+	}
+	if m.histPos == len(m.history) {
+		m.draft = m.textinput.Value()
+	}
+	m.histPos--
+	m.textinput.SetValue(m.history[m.histPos])
+	m.textinput.CursorEnd()
+}
+
+func (m *Model) historyNext() {
+	if m.histPos >= len(m.history) {
+		return
+	}
+	m.histPos++
+	if m.histPos == len(m.history) {
+		m.textinput.SetValue(m.draft)
+	} else {
+		m.textinput.SetValue(m.history[m.histPos])
+	}
+	m.textinput.CursorEnd()
+}
+
 func (m *Model) setCompletion(name string) {
 	val := "/" + name
 	if len(m.tabMatches) == 1 {
@@ -316,6 +372,9 @@ func renderOneLine(l hub.Line, sty styles) string {
 	case hub.KindChat:
 		nick := sty.NickStyle(l.Sender).Render(l.Sender)
 		return fmt.Sprintf("%s %s: %s", ts, nick, sty.ChatBody.Render(l.Body))
+	case hub.KindAction:
+		nick := sty.NickStyle(l.Sender).Render(l.Sender)
+		return fmt.Sprintf("%s * %s %s", ts, nick, sty.ChatBody.Render(l.Body))
 	case hub.KindSystem:
 		return ts + " " + sty.SystemLine.Render(l.Body)
 	case hub.KindError:

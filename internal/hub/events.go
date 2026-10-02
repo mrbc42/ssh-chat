@@ -14,6 +14,7 @@ const (
 	KindInfo   LineKind = "info"   // help/list/who output, confirmations
 	KindAdmin  LineKind = "admin"  // delivered admin alert / server broadcast
 	KindPM     LineKind = "pm"     // private message (Sender + Dir set)
+	KindAction LineKind = "action" // /me emote (Sender set)
 )
 
 // Line is one line of chat/system/command output, carrying enough
@@ -38,12 +39,19 @@ type Outbound struct {
 	// Scrollback is the history replay to show after a SwitchRoom (oldest first).
 	Scrollback []Line
 
+	// Clear, when true, tells the UI to empty its scrollback pane.
+	Clear bool
+
 	// Disconnect, when true, tells the UI to close the session.
 	Disconnect bool
 }
 
 func chatLine(sender, body string) Line {
 	return Line{Time: time.Now(), Kind: KindChat, Sender: sender, Body: body}
+}
+
+func actionLine(sender, body string) Line {
+	return Line{Time: time.Now(), Kind: KindAction, Sender: sender, Body: body}
 }
 
 func systemLine(body string) Line {
@@ -98,6 +106,10 @@ type evChat struct {
 	sess *Session
 	body string
 }
+type evAction struct {
+	sess *Session
+	body string
+}
 type evSystem struct {
 	text    string
 	persist bool
@@ -134,6 +146,7 @@ type evAdminAnnounce struct{ text string }
 func (evJoin) isRoomEvent()          {}
 func (evPart) isRoomEvent()          {}
 func (evChat) isRoomEvent()          {}
+func (evAction) isRoomEvent()        {}
 func (evSystem) isRoomEvent()        {}
 func (evForceRemove) isRoomEvent()   {}
 func (evSetLocked) isRoomEvent()     {}

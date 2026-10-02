@@ -98,6 +98,8 @@ func (r *Room) run() {
 			r.handlePart(ctx, e.sess, e.reason)
 		case evChat:
 			r.handleChat(ctx, e.sess, e.body)
+		case evAction:
+			r.handleAction(ctx, e.sess, e.body)
 		case evSystem:
 			r.broadcastSystem(ctx, e.text, e.persist)
 		case evForceRemove:
@@ -167,7 +169,9 @@ func (r *Room) handleJoin(ctx context.Context, sess *Session) {
 	var lines []Line
 	if err == nil {
 		for _, m := range msgs {
-			lines = append(lines, lineFromMessage(m))
+			if l := lineFromMessage(m); !sess.ignoresLine(l) {
+				lines = append(lines, l)
+			}
 		}
 	}
 
@@ -178,6 +182,11 @@ func (r *Room) handleJoin(ctx context.Context, sess *Session) {
 		SwitchRoom: &RoomInfo{Name: r.Name, Topic: r.topic, Locked: r.locked, Announce: r.announce, Members: len(r.members)},
 		Scrollback: lines,
 	})
+	if sess.joinNotice != "" {
+		line := infoLine(sess.joinNotice)
+		sess.send(Outbound{Line: &line})
+		sess.joinNotice = ""
+	}
 
 	if r.announce {
 		text := fmt.Sprintf("*** %s has joined #%s ***", sess.Nick(), r.Name)
@@ -213,6 +222,12 @@ func (r *Room) handleChat(ctx context.Context, sess *Session, body string) {
 	r.broadcastAll(chatLine(sess.Nick(), body))
 }
 
+func (r *Room) handleAction(ctx context.Context, sess *Session, body string) {
+	m := store.Message{ChannelID: r.ID, SenderFP: sess.FP, SenderName: sess.Nick(), Body: body, Kind: "action"}
+	_, _ = r.store.AppendMessage(ctx, m)
+	r.broadcastAll(actionLine(sess.Nick(), body))
+}
+
 func (r *Room) handleForceRemove(ctx context.Context, target *Session, broadcastText, targetText string) {
 	if _, ok := r.members[target]; !ok {
 		return
@@ -245,6 +260,9 @@ func (r *Room) persistAdmin(ctx context.Context, text string) {
 
 func (r *Room) broadcastAll(line Line) {
 	for sess := range r.members {
+		if sess.ignoresLine(line) {
+			continue
+		}
 		l := line
 		if !sess.send(Outbound{Line: &l}) {
 			r.hub.handleLaggingSession(sess)
@@ -254,7 +272,7 @@ func (r *Room) broadcastAll(line Line) {
 
 func (r *Room) broadcastExcept(except *Session, line Line) {
 	for sess := range r.members {
-		if sess == except {
+		if sess == except || sess.ignoresLine(line) {
 			continue
 		}
 		l := line
@@ -270,6 +288,8 @@ func lineFromMessage(m store.Message) Line {
 		return Line{Time: m.CreatedAt, Kind: KindSystem, Body: m.Body}
 	case "admin":
 		return Line{Time: m.CreatedAt, Kind: KindAdmin, Body: m.Body}
+	case "action":
+		return Line{Time: m.CreatedAt, Kind: KindAction, Sender: m.SenderName, Body: m.Body}
 	default:
 		return Line{Time: m.CreatedAt, Kind: KindChat, Sender: m.SenderName, Body: m.Body}
 	}
