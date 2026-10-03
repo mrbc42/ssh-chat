@@ -36,6 +36,8 @@ func main() {
 	botData := flag.String("bot-data", "", "optional directory of bot data files overriding the built-in persona/content")
 	botDB := flag.String("bot-db", "", "bot SQLite database (default: <db dir>/bot.db)")
 	roomExpiry := flag.Duration("room-expiry", 30*24*time.Hour, "delete empty channels idle this long (0 disables)")
+	flag.IntVar(&sshserver.MaxConnsPerIP, "max-conns-per-ip", sshserver.MaxConnsPerIP, "max concurrent connections from one IP")
+	flag.IntVar(&sshserver.MaxConnsPerMinute, "max-conns-per-min", sshserver.MaxConnsPerMinute, "max new connections per minute from one IP")
 	flag.Parse()
 
 	if err := os.MkdirAll(dirOf(*dbPath), 0o755); err != nil {

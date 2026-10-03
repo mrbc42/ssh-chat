@@ -36,7 +36,13 @@ type Model struct {
 	textinput textinput.Model
 
 	lines    []hub.Line
+	rowsPer  [][]string // rendered, wrapped rows for each entry of lines (parallel slice)
 	roomInfo hub.RoomInfo
+
+	// totalOnline is refreshed once a second, never inside View: counting
+	// users is a blocking round trip to every room's goroutine, and View runs
+	// on every redraw of every connected user.
+	totalOnline int
 
 	width, height int
 
@@ -84,16 +90,17 @@ func NewModel(ctx context.Context, h *hub.Hub, sess *hub.Session, renderer *lipg
 	vp := viewport.New(width, max(height-fixedRows, 1))
 
 	return Model{
-		ctx:       ctx,
-		h:         h,
-		sess:      sess,
-		renderer:  renderer,
-		sty:       sty,
-		viewport:  vp,
-		textinput: ti,
-		width:     width,
-		height:    height,
-		focused:   true,
+		totalOnline: h.TotalUsersOnline(),
+		ctx:         ctx,
+		h:           h,
+		sess:        sess,
+		renderer:    renderer,
+		sty:         sty,
+		viewport:    vp,
+		textinput:   ti,
+		width:       width,
+		height:      height,
+		focused:     true,
 	}
 }
 
@@ -129,21 +136,42 @@ func (m *Model) syncPrompt() {
 	m.textinput.Width = max(m.width-lipgloss.Width(m.textinput.Prompt)-1, 1)
 }
 
+// layout re-renders every line for the current size. It is only needed when
+// the size or the set of lines changes wholesale (resize, room switch,
+// /clear); a single new message goes through appendLine instead.
 func (m *Model) layout() {
 	m.viewport.Width = m.width
 	m.viewport.Height = max(m.height-fixedRows, 1)
 	m.syncPrompt()
-	m.viewport.SetContent(renderLines(m.lines, m.sty, m.viewport.Width, m.viewport.Height))
+	m.rowsPer = make([][]string, len(m.lines))
+	for i, l := range m.lines {
+		m.rowsPer[i] = renderRows(l, m.sty, m.viewport.Width)
+	}
+	m.refreshViewport()
+}
+
+// refreshViewport rebuilds the pane from the cached rows (cheap: no styling)
+// and keeps the conversation bottom-anchored.
+func (m *Model) refreshViewport() {
+	var rows []string
+	for _, r := range m.rowsPer {
+		rows = append(rows, r...)
+	}
+	if pad := m.viewport.Height - len(rows); pad > 0 {
+		rows = append(make([]string, pad), rows...)
+	}
+	m.viewport.SetContent(strings.Join(rows, "\n"))
 	m.viewport.GotoBottom()
 }
 
 func (m *Model) appendLine(line hub.Line) {
 	m.lines = append(m.lines, line)
+	m.rowsPer = append(m.rowsPer, renderRows(line, m.sty, m.viewport.Width)) // only the new line is styled
 	if len(m.lines) > 2000 {
 		m.lines = m.lines[len(m.lines)-2000:]
+		m.rowsPer = m.rowsPer[len(m.rowsPer)-2000:]
 	}
-	m.viewport.SetContent(renderLines(m.lines, m.sty, m.viewport.Width, m.viewport.Height))
-	m.viewport.GotoBottom()
+	m.refreshViewport()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -163,6 +191,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the beep. Piggybacking on the 1-second tick guarantees at least
 		// one render sees it first.
 		m.pendingBell = false
+		m.totalOnline = m.h.TotalUsersOnline()
 		m.h.CheckIdle(m.sess)
 		return m, tickCmd()
 
@@ -241,7 +270,7 @@ func (m Model) View() string {
 	bar := renderStatusBar(statusBarState{
 		Now:         time.Now(),
 		Room:        m.roomInfo,
-		TotalOnline: m.h.TotalUsersOnline(),
+		TotalOnline: m.totalOnline,
 		StartedAt:   m.h.StartedAt(),
 	}, m.width, m.sty)
 
@@ -362,24 +391,13 @@ func (m *Model) setCompletion(name string) {
 	m.textinput.CursorEnd()
 }
 
-// renderLines colorizes each logical Line by Kind/sender, word-wraps to
-// width, and pads blank rows at the TOP so the conversation stays anchored
-// to the bottom of the pane and grows upward as new lines arrive — like an
-// old BBS chat window — instead of starting at the top with empty space
-// below.
-func renderLines(lines []hub.Line, sty styles, width, height int) string {
-	var rows []string
-	for _, l := range lines {
-		rendered := renderOneLine(l, sty)
-		if width > 0 {
-			rendered = sty.renderer.NewStyle().Width(width).Render(rendered)
-		}
-		rows = append(rows, strings.Split(rendered, "\n")...)
+// renderRows styles one chat line and word-wraps it to width.
+func renderRows(l hub.Line, sty styles, width int) []string {
+	rendered := renderOneLine(l, sty)
+	if width > 0 {
+		rendered = sty.renderer.NewStyle().Width(width).Render(rendered)
 	}
-	if pad := height - len(rows); pad > 0 {
-		rows = append(make([]string, pad), rows...)
-	}
-	return strings.Join(rows, "\n")
+	return strings.Split(rendered, "\n")
 }
 
 func renderOneLine(l hub.Line, sty styles) string {

@@ -24,20 +24,23 @@ import (
 	"github.com/mrbc42/ssh-chat/internal/ui"
 )
 
-// maxConnsPerIP caps concurrent sessions from a single source address, to
+// MaxConnsPerIP caps concurrent sessions from a single source address, to
 // stop one misbehaving client from exhausting the server on this zero-auth,
 // open-to-anyone service. Deliberately generous rather than tight: anyone
 // behind NAT (an office, a household, or — as happened during development
 // — several test clients that all appear as one address through a podman
 // bridge) legitimately needs more than a couple of concurrent connections
 // from what the server sees as a single IP.
-const maxConnsPerIP = 10
+var MaxConnsPerIP = 10
 
-// maxConnsPerMinute caps how often one address may open new connections.
-const maxConnsPerMinute = 30
+// MaxConnsPerMinute caps how often one address may open new connections.
+// Both limits are variables so cmd/server can expose them as flags (load
+// tests from a single machine need them raised); the defaults are the
+// production values.
+var MaxConnsPerMinute = 30
 
 func New(addr, hostKeyPath string, st *store.Store, h *hub.Hub) (*ssh.Server, error) {
-	connLimiter := ratelimit.NewConnLimiterRate(maxConnsPerIP, maxConnsPerMinute)
+	connLimiter := ratelimit.NewConnLimiterRate(MaxConnsPerIP, MaxConnsPerMinute)
 
 	s, err := wish.NewServer(
 		wish.WithAddress(addr),
