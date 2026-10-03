@@ -17,7 +17,7 @@ type statusBarState struct {
 
 // renderStatusBar builds the single-line status bar, dropping lower-priority
 // fields from the right when the terminal is too narrow to fit everything.
-func renderStatusBar(st statusBarState, width int, sty styles) string {
+func renderStatusBar(st statusBarState, width int, sty *styles) string {
 	lock := "unlocked"
 	if st.Room.Locked {
 		lock = "locked"

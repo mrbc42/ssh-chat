@@ -8,7 +8,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -29,14 +28,25 @@ type Model struct {
 	sess *hub.Session
 
 	renderer *lipgloss.Renderer
-	sty      styles
+	sty      *styles
 
-	viewport  viewport.Model
 	textinput textinput.Model
 
+	// Scrollback. lines are the raw chat lines; rows is the same content
+	// already styled and wrapped, flattened, so showing a screenful or adding
+	// one message never re-styles anything old. rowsPer[i] is how many rows
+	// line i occupies (so the oldest line can be dropped). scroll is how many
+	// rows up from the bottom the user has paged (0 = following the chat).
 	lines    []hub.Line
-	rowsPer  [][]string // rendered, wrapped rows for each entry of lines (parallel slice)
+	rows     []string
+	rowsPer  []int
+	scroll   int
 	roomInfo hub.RoomInfo
+
+	// Pre-rendered pieces that only change on resize / once a second / room
+	// switch, not on every message.
+	banner, bar string
+	lastNick    string
 
 	// totalOnline is refreshed once a second, never inside View: counting
 	// users is a blocking round trip to every room's goroutine, and View runs
@@ -86,8 +96,6 @@ func NewModel(ctx context.Context, h *hub.Hub, sess *hub.Session, renderer *lipg
 	ti.Cursor.TextStyle = renderer.NewStyle().Foreground(lipgloss.Color("#e4e4e4"))
 	ti.Cursor.SetMode(cursor.CursorBlink)
 
-	vp := viewport.New(width, max(height-fixedRows, 1))
-
 	return Model{
 		totalOnline: h.TotalUsersOnline(),
 		ctx:         ctx,
@@ -95,7 +103,6 @@ func NewModel(ctx context.Context, h *hub.Hub, sess *hub.Session, renderer *lipg
 		sess:        sess,
 		renderer:    renderer,
 		sty:         sty,
-		viewport:    vp,
 		textinput:   ti,
 		width:       width,
 		height:      height,
@@ -130,47 +137,87 @@ func (m *Model) syncPrompt() {
 		return
 	}
 	nick := m.sess.Nick()
-	m.textinput.Prompt = nick + "> "
-	m.textinput.PromptStyle = m.sty.NickStyle(nick)
-	m.textinput.Width = max(m.width-lipgloss.Width(m.textinput.Prompt)-1, 1)
+	if nick != m.lastNick || m.textinput.Width == 0 {
+		m.lastNick = nick
+		m.textinput.Prompt = nick + "> "
+		m.textinput.PromptStyle = m.sty.NickStyle(nick)
+		m.textinput.Width = max(m.width-lipgloss.Width(m.textinput.Prompt)-1, 1)
+	}
 }
+
+func (m *Model) viewHeight() int { return max(m.height-fixedRows, 1) }
 
 // layout re-renders every line for the current size. It is only needed when
 // the size or the set of lines changes wholesale (resize, room switch,
 // /clear); a single new message goes through appendLine instead.
 func (m *Model) layout() {
-	m.viewport.Width = m.width
-	m.viewport.Height = max(m.height-fixedRows, 1)
+	m.lastNick = "" // force the prompt width to be recomputed for the new size
 	m.syncPrompt()
-	m.rowsPer = make([][]string, len(m.lines))
+	m.banner = m.sty.Banner.Width(m.width).Align(lipgloss.Center).Render(bannerText)
+	m.rows, m.rowsPer, m.scroll = nil, make([]int, len(m.lines)), 0
 	for i, l := range m.lines {
-		m.rowsPer[i] = renderRows(l, m.sty, m.viewport.Width)
+		r := renderRows(l, m.sty, m.width)
+		m.rowsPer[i] = len(r)
+		m.rows = append(m.rows, r...)
 	}
-	m.refreshViewport()
+	m.refreshBar()
 }
 
-// refreshViewport rebuilds the pane from the cached rows (cheap: no styling)
-// and keeps the conversation bottom-anchored.
-func (m *Model) refreshViewport() {
-	var rows []string
-	for _, r := range m.rowsPer {
-		rows = append(rows, r...)
-	}
-	if pad := m.viewport.Height - len(rows); pad > 0 {
-		rows = append(make([]string, pad), rows...)
-	}
-	m.viewport.SetContent(strings.Join(rows, "\n"))
-	m.viewport.GotoBottom()
+// refreshBar rebuilds the status bar. Called once a second and on room
+// changes, never per message.
+func (m *Model) refreshBar() {
+	m.bar = renderStatusBar(statusBarState{
+		Now:         time.Now(),
+		Room:        m.roomInfo,
+		TotalOnline: m.totalOnline,
+		StartedAt:   m.h.StartedAt(),
+	}, m.width, m.sty)
 }
+
+const maxScrollbackLines = 2000
 
 func (m *Model) appendLine(line hub.Line) {
+	r := renderRows(line, m.sty, m.width) // only the new line is styled
 	m.lines = append(m.lines, line)
-	m.rowsPer = append(m.rowsPer, renderRows(line, m.sty, m.viewport.Width)) // only the new line is styled
-	if len(m.lines) > 2000 {
-		m.lines = m.lines[len(m.lines)-2000:]
-		m.rowsPer = m.rowsPer[len(m.rowsPer)-2000:]
+	m.rowsPer = append(m.rowsPer, len(r))
+	m.rows = append(m.rows, r...)
+	if len(m.lines) > maxScrollbackLines {
+		drop := m.rowsPer[0]
+		m.lines = m.lines[1:]
+		m.rowsPer = m.rowsPer[1:]
+		m.rows = m.rows[drop:]
+		if cap(m.lines) > 4*maxScrollbackLines { // let the backing arrays shrink
+			m.lines = append([]hub.Line(nil), m.lines...)
+			m.rowsPer = append([]int(nil), m.rowsPer...)
+			m.rows = append([]string(nil), m.rows...)
+		}
 	}
-	m.refreshViewport()
+	m.scroll = 0 // follow the conversation
+}
+
+// pageUp / pageDown scroll the chat pane by nearly a screenful.
+func (m *Model) pageUp() {
+	m.scroll = min(m.scroll+max(m.viewHeight()-1, 1), max(len(m.rows)-m.viewHeight(), 0))
+}
+
+func (m *Model) pageDown() {
+	m.scroll = max(m.scroll-max(m.viewHeight()-1, 1), 0)
+}
+
+// visibleRows returns exactly viewHeight rows: the current window onto the
+// scrollback, bottom-anchored with blank rows above a short conversation.
+func (m *Model) visibleRows() []string {
+	h := m.viewHeight()
+	end := len(m.rows) - m.scroll
+	start := end - h
+	out := make([]string, 0, h)
+	if start < 0 {
+		for i := start; i < 0; i++ {
+			out = append(out, "")
+		}
+		start = 0
+	}
+	return append(out, m.rows[start:end]...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -191,6 +238,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// one render sees it first.
 		m.pendingBell = false
 		m.totalOnline = m.h.TotalUsersOnline()
+		m.refreshBar()
 		m.h.CheckIdle(m.sess)
 		return m, tickCmd()
 
@@ -230,10 +278,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "pgup":
-			m.viewport.ViewUp()
+			m.pageUp()
 			return m, nil
 		case "pgdown":
-			m.viewport.ViewDown()
+			m.pageDown()
 			return m, nil
 		case "tab":
 			m.completeCommand()
@@ -265,21 +313,17 @@ func (m Model) View() string {
 	if m.width < minUsableWidth || m.height < minUsableHeight {
 		return m.sty.TooNarrow.Render("Terminal too small. Please resize your window.")
 	}
-	banner := m.sty.Banner.Width(m.width).Align(lipgloss.Center).Render(bannerText)
-	bar := renderStatusBar(statusBarState{
-		Now:         time.Now(),
-		Room:        m.roomInfo,
-		TotalOnline: m.totalOnline,
-		StartedAt:   m.h.StartedAt(),
-	}, m.width, m.sty)
-
-	out := lipgloss.JoinVertical(lipgloss.Left,
-		banner,
-		m.viewport.View(),
-		"",
-		bar,
-		m.textinput.View(),
-	)
+	banner, bar := m.banner, m.bar
+	if banner == "" { // before the first layout
+		banner = m.sty.Banner.Width(m.width).Align(lipgloss.Center).Render(bannerText)
+	}
+	if bar == "" {
+		m.refreshBar()
+		bar = m.bar
+	}
+	// Plain joins: every piece is already the right width, so lipgloss's
+	// block-alignment pass (JoinVertical) would only burn CPU.
+	out := banner + "\n" + strings.Join(m.visibleRows(), "\n") + "\n\n" + bar + "\n" + m.textinput.View()
 	if m.pendingBell {
 		// A single BEL byte triggers whatever bell behavior the client
 		// terminal has configured (audible, visual flash, or nothing if
@@ -393,7 +437,7 @@ func (m *Model) setCompletion(name string) {
 // renderRows styles one chat line and word-wraps it to width. Continuation
 // rows are indented under the start of the message text, so a wrapped
 // sentence reads as one message rather than as several.
-func renderRows(l hub.Line, sty styles, width int) []string {
+func renderRows(l hub.Line, sty *styles, width int) []string {
 	prefix, body, style := splitLine(l, sty)
 	pw := lipgloss.Width(prefix)
 	// Too narrow (or a very long nick) for a hanging indent: wrap flush left.
@@ -456,7 +500,7 @@ func wrapPlain(s string, width int) []string {
 
 // splitLine returns the styled leader ("[15:04] nick: "), the plain message
 // text, and the style to apply to each row of that text.
-func splitLine(l hub.Line, sty styles) (prefix, body string, style lipgloss.Style) {
+func splitLine(l hub.Line, sty *styles) (prefix, body string, style lipgloss.Style) {
 	ts := sty.Timestamp.Render("[" + l.Time.Format("15:04") + "]")
 	switch l.Kind {
 	case hub.KindChat:

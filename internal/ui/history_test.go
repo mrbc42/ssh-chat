@@ -2,6 +2,7 @@ package ui
 
 import (
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -109,4 +110,84 @@ func TestLongMessagesWrapWithHangingIndent(t *testing.T) {
 	// Narrow terminal / long nick: fall back to flush-left wrapping, never panic.
 	_ = renderRows(hub.Line{Time: at, Kind: hub.KindChat, Sender: strings.Repeat("n", 24), Body: body}, sty, 30)
 	_ = renderRows(hub.Line{Time: at, Kind: hub.KindSystem, Body: body}, sty, 0)
+}
+
+func TestFastColorRendersIdenticallyToHexColour(t *testing.T) {
+	for _, profile := range []termenv.Profile{termenv.ANSI256, termenv.ANSI, termenv.TrueColor} {
+		r := lipgloss.NewRenderer(io.Discard)
+		r.SetColorProfile(profile)
+		for _, hex := range nickPalette {
+			slow := r.NewStyle().Foreground(lipgloss.Color(hex)).Bold(true).Render("x")
+			fast := r.NewStyle().Foreground(fastColor(r, hex)).Bold(true).Render("x")
+			if slow != fast {
+				t.Errorf("profile %v colour %s: fast %q != slow %q", profile, hex, fast, slow)
+			}
+		}
+	}
+}
+
+func TestScrollbackRowsAndPaging(t *testing.T) {
+	r := lipgloss.NewRenderer(io.Discard)
+	m := Model{sty: newStyles(r), textinput: textinput.New(), width: 40, height: 10} // 6 visible rows
+	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	line := func(i int) hub.Line {
+		return hub.Line{Time: at, Kind: hub.KindChat, Sender: "bob", Body: "msg " + strconv.Itoa(i)}
+	}
+
+	for i := 0; i < 3; i++ { // a short conversation is bottom-anchored under blank rows
+		m.appendLine(line(i))
+	}
+	vis := m.visibleRows()
+	if len(vis) != 6 || vis[0] != "" || vis[2] != "" || !strings.Contains(vis[5], "msg 2") || !strings.Contains(vis[3], "msg 0") {
+		t.Fatalf("short conversation not bottom-anchored: %q", vis)
+	}
+
+	for i := 3; i < 20; i++ {
+		m.appendLine(line(i))
+	}
+	vis = m.visibleRows()
+	if len(vis) != 6 || !strings.Contains(vis[5], "msg 19") || !strings.Contains(vis[0], "msg 14") {
+		t.Fatalf("window should show the last 6 rows: %q", vis)
+	}
+
+	m.pageUp()
+	vis = m.visibleRows()
+	if !strings.Contains(vis[5], "msg 14") {
+		t.Fatalf("pageUp should scroll back about a screenful: %q", vis)
+	}
+	m.pageUp()
+	m.pageUp()
+	m.pageUp()
+	m.pageUp()
+	if vis = m.visibleRows(); !strings.Contains(vis[0], "msg 0") {
+		t.Fatalf("pageUp must stop at the oldest message, not run past it: %q", vis)
+	}
+	m.pageDown()
+	m.pageDown()
+	m.pageDown()
+	m.pageDown()
+	m.pageDown()
+	if vis = m.visibleRows(); !strings.Contains(vis[5], "msg 19") {
+		t.Fatalf("pageDown should return to the newest message: %q", vis)
+	}
+	m.pageUp()
+	m.appendLine(line(20))
+	if m.scroll != 0 || !strings.Contains(m.visibleRows()[5], "msg 20") {
+		t.Fatal("a new message should return the view to the bottom")
+	}
+
+	// Trimming keeps lines, per-line row counts and rows consistent.
+	for i := 21; i < 2200; i++ {
+		m.appendLine(line(i))
+	}
+	total := 0
+	for _, n := range m.rowsPer {
+		total += n
+	}
+	if len(m.lines) != maxScrollbackLines || len(m.rowsPer) != maxScrollbackLines || len(m.rows) != total {
+		t.Fatalf("scrollback bookkeeping drifted: lines=%d rowsPer=%d rows=%d (sum %d)", len(m.lines), len(m.rowsPer), len(m.rows), total)
+	}
+	if !strings.Contains(m.visibleRows()[5], "msg 2199") {
+		t.Fatal("newest message missing after trimming")
+	}
 }

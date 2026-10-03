@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mrbc42/ssh-chat/internal/filter"
@@ -25,6 +26,10 @@ type Hub struct {
 	filter    *filter.Filter
 	observer  Observer
 	version   string
+
+	onlineMu sync.Mutex // guards the cached online count below
+	onlineAt time.Time
+	onlineN  atomic.Int64
 
 	mu    sync.RWMutex
 	rooms map[string]*Room // keyed by lowercased channel name
@@ -131,11 +136,23 @@ func (h *Hub) loadedRooms() []*Room {
 	return rooms
 }
 
+// TotalUsersOnline counts everyone connected. Counting is a round trip to
+// every room's goroutine, so the answer is shared and refreshed at most once
+// a second; callers that arrive while it is being refreshed get the last one.
 func (h *Hub) TotalUsersOnline() int {
+	if !h.onlineMu.TryLock() {
+		return int(h.onlineN.Load())
+	}
+	defer h.onlineMu.Unlock()
+	if time.Since(h.onlineAt) < time.Second {
+		return int(h.onlineN.Load())
+	}
 	total := 0
 	for _, r := range h.loadedRooms() {
 		total += r.Info().Members
 	}
+	h.onlineAt = time.Now()
+	h.onlineN.Store(int64(total))
 	return total
 }
 

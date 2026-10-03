@@ -6,6 +6,8 @@ import (
 	"context"
 	"flag"
 	"log"
+	"net/http"
+	_ "net/http/pprof" // registers /debug/pprof on the default mux; only served when -pprof is set
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -40,6 +42,7 @@ func main() {
 	botData := flag.String("bot-data", "", "optional directory of bot data files overriding the built-in persona/content")
 	botDB := flag.String("bot-db", "", "bot SQLite database (default: <db dir>/bot.db)")
 	roomExpiry := flag.Duration("room-expiry", 30*24*time.Hour, "delete empty channels idle this long (0 disables)")
+	pprofAddr := flag.String("pprof", "", "debug: serve runtime profiling (pprof) on this address, e.g. 127.0.0.1:6060; off by default")
 	flag.IntVar(&sshserver.MaxConnsPerIP, "max-conns-per-ip", sshserver.MaxConnsPerIP, "max concurrent connections from one IP")
 	flag.IntVar(&sshserver.MaxConnsPerMinute, "max-conns-per-min", sshserver.MaxConnsPerMinute, "max new connections per minute from one IP")
 	flag.Parse()
@@ -60,6 +63,9 @@ func main() {
 		log.Fatalf("creating hub: %v", err)
 	}
 
+	if *pprofAddr != "" {
+		go func() { log.Printf("pprof: %v", http.ListenAndServe(*pprofAddr, nil)) }()
+	}
 	h.SetVersion(version)
 	h.SetAfkThreshold(*afkAfter)
 	if *profanity {
