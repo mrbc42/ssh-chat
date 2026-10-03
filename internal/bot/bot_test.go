@@ -374,7 +374,14 @@ func TestTellRules(t *testing.T) {
 		}
 		t.Fatalf("%q: reply %q is not from pool %s", cmd, e.h.said[0], pool)
 	}
-	check(ghost, "!tell Bob hi", "tell_need_key")
+	// The keyless advice is a private message, never public chat.
+	e.advance(time.Minute)
+	e.h.reset()
+	e.chat(ghost, "!tell Bob hi")
+	if len(e.h.said) != 0 || len(e.h.pms) != 1 || e.h.pms[0].to != "Ghost" ||
+		!e.inPool("tell_need_key", e.b.vars(ghost), e.h.pms[0].text) {
+		t.Fatalf("tell_need_key must be a PM to Ghost only: said=%v pms=%v", e.h.said, e.h.pms)
+	}
 	check(alice, "!tell Nobody hi", "tell_unknown")
 	check(alice, "!tell Alice hi", "tell_self")
 	check(alice, "!tell SysOp-Gus hi", "tell_self")
@@ -676,8 +683,8 @@ func TestForgetAndRemember(t *testing.T) {
 	e.advance(time.Minute)
 	e.h.reset()
 	e.chat(g, "!forget")
-	if !e.inPool("forget_anon", e.b.vars(g), e.said()) {
-		t.Fatalf("anon forget reply wrong: %v", e.h.said)
+	if len(e.h.said) != 0 || len(e.h.pms) != 1 || !e.inPool("forget_anon", e.b.vars(g), e.h.pms[0].text) {
+		t.Fatalf("anon forget reply must be a private message: said=%v pms=%v", e.h.said, e.h.pms)
 	}
 }
 
@@ -796,3 +803,53 @@ func readFile(p string) (string, error) {
 }
 
 var osReadFile = os.ReadFile
+
+func TestKeylessAdviceIsPrivate(t *testing.T) {
+	e := newEnv(t)
+	alice := keyed("a", "Alice")
+	e.login(alice)
+	e.h.reset()
+
+	ghost := anonP("g", "Ghost")
+	e.login(ghost)
+
+	// Everyone in the room sees only the entrance line...
+	if len(e.h.said) != 1 || !e.inPool("login", e.b.vars(ghost), e.h.said[0]) {
+		t.Fatalf("public chat should only get the entrance line: %v", e.h.said)
+	}
+	for _, line := range e.h.said {
+		for _, v := range e.b.c.Pools["greet_anon"] {
+			if line == fill(v.Text, e.b.vars(ghost)) {
+				t.Fatalf("keyless advice leaked into public chat: %q", line)
+			}
+		}
+	}
+	// ...and the advice goes to the keyless user alone.
+	if len(e.h.pms) != 1 || e.h.pms[0].to != "Ghost" || !e.inPool("greet_anon", e.b.vars(ghost), e.h.pms[0].text) {
+		t.Fatalf("want one greet_anon PM to Ghost, got %v", e.h.pms)
+	}
+
+	// Trivia: the "no score without a key" note is private; the answer is public.
+	e.chat(ghost, "x")
+	e.advance(time.Minute)
+	e.chat(ghost, "!trivia")
+	e.advance(5 * time.Second)
+	e.h.reset()
+	e.chat(ghost, "!trivia "+e.b.trivia.q.A[0])
+	if len(e.h.pms) != 1 || e.h.pms[0].to != "Ghost" || !e.inPool("trivia_anon", e.b.vars(ghost), e.h.pms[0].text) {
+		t.Fatalf("trivia_anon must be a PM to Ghost: said=%v pms=%v", e.h.said, e.h.pms)
+	}
+	if len(e.h.said) == 0 {
+		t.Fatal("the correct-answer announcement should still be public")
+	}
+
+	// A keyed user never gets keyless advice.
+	e.h.reset()
+	e.logoff(alice)
+	e.login(alice)
+	for _, m := range e.h.pms {
+		if e.inPool("greet_anon", e.b.vars(alice), m.text) {
+			t.Fatal("keyed user received keyless advice")
+		}
+	}
+}

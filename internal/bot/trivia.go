@@ -68,7 +68,7 @@ func (b *Bot) answerTrivia(p Person, guess string) {
 			if b.tracked(p) {
 				b.st.addScore(p.FP, p.Nick, pts)
 			} else {
-				b.say(kindPlain, b.text("trivia_anon", v))
+				b.pm(p.Nick, b.text("trivia_anon", v))
 			}
 			return
 		}

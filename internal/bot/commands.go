@@ -117,7 +117,7 @@ func (b *Bot) cmdSeen(p Person, args string) {
 
 func (b *Bot) cmdTell(p Person, args string) {
 	if !b.tracked(p) {
-		b.say(kindPlain, b.text("tell_need_key", b.vars(p)))
+		b.pm(p.Nick, b.text("tell_need_key", b.vars(p))) // about their key: keep it private
 		return
 	}
 	targetRaw, msgRaw, _ := strings.Cut(args, " ")
@@ -221,7 +221,7 @@ func (b *Bot) cmdQuote(_ Person, _ string) {
 
 func (b *Bot) cmdForget(p Person, _ string) {
 	if p.Anon {
-		b.say(kindPlain, b.text("forget_anon", b.vars(p)))
+		b.pm(p.Nick, b.text("forget_anon", b.vars(p)))
 		return
 	}
 	b.st.forget(p.FP)

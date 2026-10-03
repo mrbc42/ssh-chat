@@ -48,11 +48,11 @@ func (b *Bot) onLogin(p Person) {
 	}
 
 	var tellsFor string
+	var private []string // for this user only, sent as a PM after the public lines
 	switch {
 	case p.Anon:
-		if speakNormal {
-			lines = append(lines, b.text("greet_anon", v))
-		}
+		// The "you have no key" advice is nobody else's business: PM it.
+		private = append(private, b.text("greet_anon", v))
 	case b.st.isOptedOut(p.FP):
 		// untracked by choice: entrance line only
 	default:
@@ -107,6 +107,9 @@ func (b *Bot) onLogin(p Person) {
 		b.st.set("node_record", strconv.Itoa(humans))
 	}
 	b.say(kindEvent, lines...)
+	for _, t := range private {
+		b.pm(p.Nick, t)
+	}
 
 	if tellsFor != "" {
 		for _, t := range b.st.takeTells(tellsFor) {
