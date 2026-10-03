@@ -193,6 +193,14 @@ func init() {
 		AdminOnly: true, Fn: cmdAdminLog,
 	})
 	register(&Command{
+		Name: "history", Usage: "/history [n]", Help: "Load older messages for this channel (default 100, max 500); PgUp/PgDn/mouse wheel to scroll.",
+		Fn: cmdUIOnly,
+	})
+	register(&Command{
+		Name: "mouse", Usage: "/mouse", Help: "Toggle mouse-wheel scrolling (turn it off to select text with the mouse).",
+		Fn: cmdUIOnly,
+	})
+	register(&Command{
 		Name: "quit", Aliases: []string{"exit"}, Usage: "/quit", Help: "Disconnect.",
 		Fn: cmdQuit,
 	})
@@ -1131,4 +1139,10 @@ func checkCanCreate(c *CmdCtx) string {
 		return "The server has reached its channel limit. Try joining an existing channel."
 	}
 	return ""
+}
+
+// cmdUIOnly backs commands the chat window handles itself (it needs the
+// screen); reaching the hub means the caller has no window.
+func cmdUIOnly(_ *CmdCtx, _ []string) []string {
+	return []string{"That command only works in the chat window."}
 }

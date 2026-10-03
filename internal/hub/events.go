@@ -26,6 +26,7 @@ type Line struct {
 	Sender string // nickname; set for KindChat and KindPM
 	Body   string
 	Dir    string // KindPM only: "to" or "from" (the other party named in Sender)
+	ID     int64  // database id for lines replayed from history; 0 for live lines
 }
 
 // Outbound is a message delivered to a single session's UI (via Session.Outbox).

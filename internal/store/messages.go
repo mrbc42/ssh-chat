@@ -111,15 +111,8 @@ func (s *Store) AppendMessage(ctx context.Context, m Message) (int64, error) {
 }
 
 // RecentMessages returns up to limit messages for the channel, oldest first.
-func (s *Store) RecentMessages(ctx context.Context, channelID int64, limit int) ([]Message, error) {
-	rows, err := s.rdb.QueryContext(ctx,
-		`SELECT id, channel_id, sender_fp, sender_name, body, kind, created_at
-		 FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT ?`, channelID, limit)
-	if err != nil {
-		return nil, err
-	}
+func scanMessages(rows *sql.Rows) ([]Message, error) {
 	defer rows.Close()
-
 	var out []Message
 	for rows.Next() {
 		var m Message
@@ -133,9 +126,55 @@ func (s *Store) RecentMessages(ctx context.Context, channelID int64, limit int) 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// reverse to oldest-first
+	// the queries return newest first; callers want oldest first
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
 	return out, nil
+}
+
+func (s *Store) RecentMessages(ctx context.Context, channelID int64, limit int) ([]Message, error) {
+	rows, err := s.rdb.QueryContext(ctx,
+		`SELECT id, channel_id, sender_fp, sender_name, body, kind, created_at
+		 FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT ?`, channelID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanMessages(rows)
+}
+
+// MessagesBefore returns up to limit messages of a channel older than the
+// message with id beforeID, oldest first (for paging back through history).
+func (s *Store) MessagesBefore(ctx context.Context, channelID, beforeID int64, limit int) ([]Message, error) {
+	rows, err := s.rdb.QueryContext(ctx,
+		`SELECT id, channel_id, sender_fp, sender_name, body, kind, created_at
+		 FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?`, channelID, beforeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanMessages(rows)
+}
+
+// PruneMessages deletes messages older than cutoff and returns how many went.
+// It works in small chunks through the shared write connection so that live
+// chat writes interleave instead of waiting behind one huge DELETE.
+func (s *Store) PruneMessages(ctx context.Context, cutoff time.Time) (int64, error) {
+	var total int64
+	for {
+		res, err := s.db.ExecContext(ctx,
+			`DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE created_at < ? LIMIT 2000)`, cutoff.Unix())
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n == 0 {
+			return total, nil
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }

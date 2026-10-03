@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_channel_time ON messages(channel_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
 
 CREATE TABLE IF NOT EXISTS operators (
     channel_id  INTEGER NOT NULL REFERENCES channels(id),

@@ -156,7 +156,7 @@ func teaHandler(st *store.Store, h *hub.Hub) bm.Handler {
 		// when the window doesn't have focus. Terminals that don't support
 		// it simply never send these events; focus is then assumed true
 		// and the beep logic degrades to never firing, not misfiring.
-		opts := append(bm.MakeOptions(sess), tea.WithReportFocus())
+		opts := append(bm.MakeOptions(sess), tea.WithReportFocus(), tea.WithMouseCellMotion())
 		return model, opts
 	}
 }

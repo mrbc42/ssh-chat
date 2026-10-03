@@ -2,9 +2,12 @@ package hub
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mrbc42/ssh-chat/internal/store"
 )
 
 // errors drains s and returns every error line.
@@ -289,5 +292,56 @@ func TestJanitorReapsSessionsWhoseConnectionEnded(t *testing.T) {
 	who := h.Main().Who()
 	if len(who) != 1 || who[0] != "live" {
 		t.Fatalf("janitor should remove only the dead session, members now: %v", who)
+	}
+}
+
+func TestHistoryLimitsAndChannelScope(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	main, _ := st.GetOrCreateMainChannel(ctx)
+	side, err := st.CreateChannel(ctx, "side", "SHA256:owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 700; i++ {
+		st.AppendMessage(ctx, store.Message{ChannelID: main.ID, SenderFP: "f", SenderName: "bob", Body: "main " + strconv.Itoa(i), Kind: "msg"})
+	}
+	for i := 0; i < 5; i++ {
+		st.AppendMessage(ctx, store.Message{ChannelID: side.ID, SenderFP: "f", SenderName: "bob", Body: "side " + strconv.Itoa(i), Kind: "msg"})
+	}
+	s := NewSession("SHA256:reader", "", "reader")
+	h.Main().Join(s)
+	time.Sleep(100 * time.Millisecond)
+
+	lines, exhausted, err := h.History(ctx, s, 0, 9999) // absurd n is clamped to the maximum
+	if err != nil || len(lines) != maxHistory || exhausted {
+		t.Fatalf("n should clamp to %d: got %d exhausted=%v err=%v", maxHistory, len(lines), exhausted, err)
+	}
+	newest := lines[len(lines)-1] // the newest stored line may be the join notice itself
+	if newest.ID == 0 || (newest.Body != "main 699" && !strings.Contains(newest.Body, "has joined")) {
+		t.Fatalf("newest history line = %+v", newest)
+	}
+	for i := 1; i < len(lines); i++ {
+		if lines[i].ID <= lines[i-1].ID {
+			t.Fatal("history must be oldest first with ascending ids")
+		}
+	}
+	if lines, _, _ := h.History(ctx, s, 0, 0); len(lines) != defaultHistory {
+		t.Fatalf("n=0 should mean the default %d, got %d", defaultHistory, len(lines))
+	}
+
+	other := NewSession("SHA256:other", "", "other") // in #side: sees only #side
+	ch2, _, _ := st.GetChannelByName(ctx, "side")
+	h.GetOrLoadRoom(ctx, ch2).Join(other)
+	time.Sleep(100 * time.Millisecond)
+	lines, exhausted, _ = h.History(ctx, other, 0, 100)
+	// 5 messages, plus possibly the join notice for "other" itself.
+	if (len(lines) != 5 && len(lines) != 6) || !exhausted || !strings.HasPrefix(lines[0].Body, "side") {
+		t.Fatalf("#side history = %d lines exhausted=%v", len(lines), exhausted)
+	}
+	for _, l := range lines {
+		if strings.HasPrefix(l.Body, "main") {
+			t.Fatal("#side history leaked #main messages")
+		}
 	}
 }

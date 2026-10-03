@@ -3,7 +3,10 @@ package ui
 import (
 	"context"
 	"expvar"
+	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +46,10 @@ type Model struct {
 	rowsPer  []int
 	scroll   int
 	roomInfo hub.RoomInfo
+
+	unread      int  // messages that arrived while scrolled up
+	historyDone bool // /history has reached the start of this channel
+	mouse       bool // mouse-wheel scrolling on (mouse capture also blocks plain text selection)
 
 	// Pre-rendered pieces that only change on resize / once a second / room
 	// switch, not on every message.
@@ -108,6 +115,7 @@ func NewModel(ctx context.Context, h *hub.Hub, sess *hub.Session, renderer *lipg
 		width:       width,
 		height:      height,
 		focused:     true,
+		mouse:       true,
 	}
 }
 
@@ -165,7 +173,7 @@ func (m *Model) layout() {
 	m.lastNick = "" // force the prompt width to be recomputed for the new size
 	m.syncPrompt()
 	m.banner = m.sty.Banner.Width(m.width).Align(lipgloss.Center).Render(bannerText)
-	m.rows, m.rowsPer, m.scroll = nil, make([]int, len(m.lines)), 0
+	m.rows, m.rowsPer, m.scroll, m.unread = nil, make([]int, len(m.lines)), 0, 0
 	for i, l := range m.lines {
 		r := cachedRows(l, m.sty, m.width)
 		m.rowsPer[i] = len(r)
@@ -203,16 +211,100 @@ func (m *Model) appendLine(line hub.Line) {
 			m.rows = append([]string(nil), m.rows...)
 		}
 	}
-	m.scroll = 0 // follow the conversation
+	if m.scroll > 0 {
+		// The user is reading older messages: don't yank the view. Keep the
+		// same rows on screen (scroll counts up from the bottom, so grow it
+		// by the rows just added) and count what they are missing.
+		m.scroll += len(r)
+		m.unread++
+		m.clampScroll()
+	}
+}
+
+func (m *Model) maxScroll() int { return max(len(m.rows)-m.viewHeight(), 0) }
+
+func (m *Model) clampScroll() {
+	m.scroll = min(max(m.scroll, 0), m.maxScroll())
+	if m.scroll == 0 {
+		m.unread = 0
+	}
+}
+
+// scrollBy moves the view up (positive) or down (negative) by n rows.
+func (m *Model) scrollBy(n int) {
+	m.scroll += n
+	m.clampScroll()
 }
 
 // pageUp / pageDown scroll the chat pane by nearly a screenful.
-func (m *Model) pageUp() {
-	m.scroll = min(m.scroll+max(m.viewHeight()-1, 1), max(len(m.rows)-m.viewHeight(), 0))
+func (m *Model) pageUp()   { m.scrollBy(max(m.viewHeight()-1, 1)) }
+func (m *Model) pageDown() { m.scrollBy(-max(m.viewHeight()-1, 1)) }
+
+func (m *Model) scrollToTop()    { m.scroll = m.maxScroll() }
+func (m *Model) scrollToBottom() { m.scroll, m.unread = 0, 0 }
+
+// scrollHint is the line between the chat and the status bar while scrolled up.
+func (m *Model) scrollHint() string {
+	switch {
+	case m.scroll == 0:
+		return ""
+	case m.unread > 0:
+		return m.sty.fSystem.apply(fmt.Sprintf(" ▼ %d new message%s below — End or PgDn to jump down", m.unread, plural(m.unread)))
+	default:
+		return m.sty.fInfo.apply(" ▲ reading older messages — End or PgDn to return")
+	}
 }
 
-func (m *Model) pageDown() {
-	m.scroll = max(m.scroll-max(m.viewHeight()-1, 1), 0)
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+// oldestID is the database id of the oldest replayed message on screen
+// (0 if there are none), the cursor for loading earlier history.
+func (m *Model) oldestID() int64 {
+	var oldest int64
+	for _, l := range m.lines {
+		if l.ID > 0 && (oldest == 0 || l.ID < oldest) {
+			oldest = l.ID
+		}
+	}
+	return oldest
+}
+
+// loadHistory prepends up to n older messages from this channel and leaves the
+// view showing them (scroll down to return to the conversation).
+func (m *Model) loadHistory(n int) {
+	note := func(text string) { m.appendLine(hub.Line{Time: time.Now(), Kind: hub.KindInfo, Body: text}) }
+	if m.historyDone {
+		note("You are already at the start of this channel's history.")
+		return
+	}
+	before := m.oldestID()
+	if before == 0 {
+		before = math.MaxInt64
+	}
+	older, exhausted, err := m.h.History(m.ctx, m.sess, before, n)
+	if err != nil {
+		note("Could not load history: " + err.Error())
+		return
+	}
+	if exhausted {
+		m.historyDone = true
+		older = append([]hub.Line{{Time: time.Now(), Kind: hub.KindInfo, Body: "— start of this channel's history —"}}, older...)
+	}
+	if len(older) == 0 {
+		note("No older messages.")
+		return
+	}
+	below, unread := len(m.rows), m.unread
+	m.lines = append(older, m.lines...)
+	m.layout()
+	m.unread = unread
+	m.scroll = below // bottom of the screen = the last loaded older line
+	m.clampScroll()
 }
 
 // visibleRows returns exactly viewHeight rows: the current window onto the
@@ -264,6 +356,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout()
 		} else if ob.SwitchRoom != nil {
 			statSwitchRooms.Add(1)
+			m.historyDone = false
 			m.roomInfo = *ob.SwitchRoom
 			m.lines = append([]hub.Line{}, ob.Scrollback...)
 			m.layout()
@@ -274,6 +367,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, waitForOutbox(m.sess)
+
+	case tea.MouseMsg:
+		if m.mouse && msg.Action == tea.MouseActionPress {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				m.scrollBy(3)
+			case tea.MouseButtonWheelDown:
+				m.scrollBy(-3)
+			}
+		}
+		return m, nil
 
 	case tea.FocusMsg:
 		m.focused = true
@@ -296,6 +400,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgdown":
 			m.pageDown()
 			return m, nil
+		case "alt+up":
+			m.scrollBy(3)
+			return m, nil
+		case "alt+down":
+			m.scrollBy(-3)
+			return m, nil
+		case "ctrl+home":
+			m.scrollToTop()
+			return m, nil
+		case "ctrl+end":
+			m.scrollToBottom()
+			return m, nil
+		case "end":
+			if m.scroll > 0 { // otherwise End moves the cursor in the input line
+				m.scrollToBottom()
+				return m, nil
+			}
+		case "home":
+			if m.textinput.Value() == "" { // otherwise Home moves the cursor in the input line
+				m.scrollToTop()
+				return m, nil
+			}
 		case "tab":
 			m.completeCommand()
 			return m, nil
@@ -310,6 +436,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.textinput.Reset()
 			if value != "" {
 				m.addHistory(value)
+				if cmd, handled := m.windowCommand(value); handled {
+					return m, cmd
+				}
 				hub.HandleInput(m.ctx, m.h, m.sess, value)
 			}
 			return m, nil
@@ -319,6 +448,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.textinput, cmd = m.textinput.Update(msg)
 	return m, cmd
+}
+
+// windowCommand handles the slash commands that need the chat window itself
+// (they act on the screen, not on the hub).
+func (m *Model) windowCommand(line string) (tea.Cmd, bool) {
+	fields := strings.Fields(line)
+	switch strings.ToLower(fields[0]) {
+	case "/history":
+		n := 100
+		if len(fields) > 1 {
+			v, err := strconv.Atoi(fields[1])
+			if err != nil || v < 1 || v > 500 {
+				m.appendLine(hub.Line{Time: time.Now(), Kind: hub.KindError, Body: "Usage: /history [n] — n from 1 to 500."})
+				return nil, true
+			}
+			n = v
+		}
+		m.loadHistory(n)
+		return nil, true
+	case "/mouse":
+		m.mouse = !m.mouse
+		state, cmd := "off — you can select text with the mouse again", tea.DisableMouse
+		if m.mouse {
+			state, cmd = "on — scroll the chat with the wheel (hold Shift to select text)", tea.EnableMouseCellMotion
+		}
+		m.appendLine(hub.Line{Time: time.Now(), Kind: hub.KindInfo, Body: "Mouse wheel scrolling is " + state + "."})
+		return cmd, true
+	}
+	return nil, false
 }
 
 func (m Model) View() string {
@@ -336,7 +494,7 @@ func (m Model) View() string {
 	}
 	// Plain joins: every piece is already the right width, so lipgloss's
 	// block-alignment pass (JoinVertical) would only burn CPU.
-	out := banner + "\n" + strings.Join(m.visibleRows(), "\n") + "\n\n" + bar + "\n" + m.textinput.View()
+	out := banner + "\n" + strings.Join(m.visibleRows(), "\n") + "\n" + m.scrollHint() + "\n" + bar + "\n" + m.textinput.View()
 	if m.pendingBell {
 		// A single BEL byte triggers whatever bell behavior the client
 		// terminal has configured (audible, visual flash, or nothing if

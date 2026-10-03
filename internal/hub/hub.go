@@ -311,7 +311,7 @@ func (h *Hub) ExpireRooms(ctx context.Context, olderThan time.Duration) ([]strin
 // flooded records a flood violation and disconnects a session that keeps
 // hammering the server despite being refused.
 func (h *Hub) flooded(sess *Session) {
-	if !sess.Strike() {
+	if !sess.Strike() || !sess.cut.CompareAndSwap(false, true) {
 		return
 	}
 	log.Printf("flood: disconnecting %s (%s, %s)", sess.Nick(), sess.FP, sess.IP)

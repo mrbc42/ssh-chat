@@ -373,14 +373,16 @@ func (r *Room) broadcastExcept(except *Session, line Line) {
 }
 
 func lineFromMessage(m store.Message) Line {
+	l := Line{ID: m.ID, Time: m.CreatedAt, Body: m.Body}
 	switch m.Kind {
 	case "system":
-		return Line{Time: m.CreatedAt, Kind: KindSystem, Body: m.Body}
+		l.Kind = KindSystem
 	case "admin":
-		return Line{Time: m.CreatedAt, Kind: KindAdmin, Body: m.Body}
+		l.Kind = KindAdmin
 	case "action":
-		return Line{Time: m.CreatedAt, Kind: KindAction, Sender: m.SenderName, Body: m.Body}
+		l.Kind, l.Sender = KindAction, m.SenderName
 	default:
-		return Line{Time: m.CreatedAt, Kind: KindChat, Sender: m.SenderName, Body: m.Body}
+		l.Kind, l.Sender = KindChat, m.SenderName
 	}
+	return l
 }

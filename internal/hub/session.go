@@ -31,6 +31,7 @@ type Session struct {
 	// session (that is how "ghost" members were created under load), and done
 	// lets a janitor notice sessions whose connection died without a part.
 	closed atomic.Bool
+	cut    atomic.Bool // already disconnected for flooding (log and notify once)
 	done   <-chan struct{}
 	id     uint64
 

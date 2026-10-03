@@ -170,14 +170,22 @@ func TestScrollbackRowsAndPaging(t *testing.T) {
 	if vis = m.visibleRows(); !strings.Contains(vis[5], "msg 19") {
 		t.Fatalf("pageDown should return to the newest message: %q", vis)
 	}
+	// While reading older messages a new one must NOT move the view...
 	m.pageUp()
+	before := append([]string(nil), m.visibleRows()...)
 	m.appendLine(line(20))
-	if m.scroll != 0 || !strings.Contains(m.visibleRows()[5], "msg 20") {
-		t.Fatal("a new message should return the view to the bottom")
+	if got := m.visibleRows(); strings.Join(got, "|") != strings.Join(before, "|") || m.unread != 1 {
+		t.Fatalf("view moved (or unread=%d) when a message arrived while scrolled up:\n before %q\n after  %q", m.unread, before, got)
+	}
+	// ...but at the bottom the view follows the conversation.
+	m.scrollToBottom()
+	m.appendLine(line(21))
+	if m.scroll != 0 || m.unread != 0 || !strings.Contains(m.visibleRows()[5], "msg 21") {
+		t.Fatal("at the bottom a new message should be followed")
 	}
 
 	// Trimming keeps lines, per-line row counts and rows consistent.
-	for i := 21; i < 2200; i++ {
+	for i := 22; i < 2200; i++ {
 		m.appendLine(line(i))
 	}
 	total := 0
@@ -300,5 +308,101 @@ func TestRowCacheIsTransparent(t *testing.T) {
 	other.Body = "something else"
 	if strings.Join(cachedRows(line, a, 80), "") == strings.Join(cachedRows(other, a, 80), "") {
 		t.Error("body not part of the cache key")
+	}
+}
+
+func TestStayPutMarkerAndJumpKeys(t *testing.T) {
+	r := lipgloss.NewRenderer(io.Discard)
+	m := Model{sty: newStyles(r), textinput: textinput.New(), width: 60, height: 10, mouse: true} // 6 visible rows
+	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	add := func(i int) {
+		m.appendLine(hub.Line{Time: at, Kind: hub.KindChat, Sender: "bob", Body: "msg " + strconv.Itoa(i)})
+	}
+	for i := 0; i < 30; i++ {
+		add(i)
+	}
+	if m.scrollHint() != "" {
+		t.Fatal("no hint while following the conversation")
+	}
+
+	press := func(k string) {
+		var msg tea.KeyMsg
+		switch k {
+		case "pgup":
+			msg = tea.KeyMsg{Type: tea.KeyPgUp}
+		case "end":
+			msg = tea.KeyMsg{Type: tea.KeyEnd}
+		case "home":
+			msg = tea.KeyMsg{Type: tea.KeyHome}
+		case "ctrl+home":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlHome}
+		case "ctrl+end":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlEnd}
+		case "alt+up":
+			msg = tea.KeyMsg{Type: tea.KeyUp, Alt: true}
+		case "alt+down":
+			msg = tea.KeyMsg{Type: tea.KeyDown, Alt: true}
+		}
+		next, _ := m.Update(msg)
+		m = next.(Model)
+	}
+
+	press("pgup")
+	if m.scroll == 0 || !strings.Contains(ansiStrip(m.scrollHint()), "reading older messages") {
+		t.Fatalf("PgUp should scroll and show the reading hint: scroll=%d hint=%q", m.scroll, m.scrollHint())
+	}
+	for i := 30; i < 33; i++ {
+		add(i)
+	}
+	if h := ansiStrip(m.scrollHint()); !strings.Contains(h, "3 new messages") {
+		t.Fatalf("want a '3 new messages' marker, got %q", h)
+	}
+	press("end")
+	if m.scroll != 0 || m.unread != 0 || m.scrollHint() != "" || !strings.Contains(m.visibleRows()[5], "msg 32") {
+		t.Fatalf("End should jump to the newest and clear the marker: scroll=%d unread=%d", m.scroll, m.unread)
+	}
+
+	press("alt+up")
+	if m.scroll != 3 {
+		t.Fatalf("alt+up should scroll 3 rows, scroll=%d", m.scroll)
+	}
+	press("alt+down")
+	if m.scroll != 0 {
+		t.Fatalf("alt+down should scroll back, scroll=%d", m.scroll)
+	}
+	press("home") // empty input: Home jumps to the oldest
+	if !strings.Contains(m.visibleRows()[0], "msg 0") {
+		t.Fatalf("Home on an empty input line should show the oldest message: %q", m.visibleRows())
+	}
+	press("ctrl+end")
+	if m.scroll != 0 {
+		t.Fatal("ctrl+end should return to the newest")
+	}
+	press("ctrl+home")
+	if m.scroll != m.maxScroll() {
+		t.Fatal("ctrl+home should go to the oldest")
+	}
+	m.scrollToBottom()
+
+	// With text typed, Home/End belong to the input line, not the chat pane.
+	m.textinput.SetValue("hello")
+	m.scrollBy(6)
+	press("home")
+	if m.scroll != 6 {
+		t.Fatalf("Home must not scroll the chat while typing: scroll=%d", m.scroll)
+	}
+
+	// Mouse wheel scrolls 3 rows; off, it does nothing.
+	m.scrollToBottom()
+	mm, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	m = mm.(Model)
+	if m.scroll != 3 {
+		t.Fatalf("wheel up should scroll 3 rows: %d", m.scroll)
+	}
+	m.mouse = false
+	mm, _ = m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	m = mm.(Model)
+	if m.scroll != 3 {
+		t.Fatal("wheel must be ignored while /mouse is off")
 	}
 }

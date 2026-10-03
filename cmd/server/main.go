@@ -41,6 +41,7 @@ func main() {
 	botOn := flag.Bool("bot", true, "run the SysOp-Gus chat bot in #main")
 	botData := flag.String("bot-data", "", "optional directory of bot data files overriding the built-in persona/content")
 	botDB := flag.String("bot-db", "", "bot SQLite database (default: <db dir>/bot.db)")
+	retention := flag.Duration("retention", 90*24*time.Hour, "delete chat history older than this (0 keeps everything)")
 	roomExpiry := flag.Duration("room-expiry", 30*24*time.Hour, "delete empty channels idle this long (0 disables)")
 	pprofAddr := flag.String("pprof", "", "debug: serve runtime profiling (pprof) on this address, e.g. 127.0.0.1:6060; off by default")
 	flag.IntVar(&sshserver.MaxConnsPerIP, "max-conns-per-ip", sshserver.MaxConnsPerIP, "max concurrent connections from one IP")
@@ -103,6 +104,9 @@ func main() {
 		}
 		log.Printf("bot %s is in #main (db=%s)", nick, botPath)
 	}
+	if *retention > 0 {
+		go runRetention(bg, st, *retention)
+	}
 	if *roomExpiry > 0 {
 		go runRoomExpiry(bg, h, *roomExpiry)
 	}
@@ -164,6 +168,26 @@ func runBackups(ctx context.Context, st *store.Store, dir, dataDir string, every
 			return
 		case <-t.C:
 			do()
+		}
+	}
+}
+
+// runRetention prunes chat history older than maxAge at startup and every 6 hours.
+func runRetention(ctx context.Context, st *store.Store, maxAge time.Duration) {
+	t := time.NewTicker(6 * time.Hour)
+	defer t.Stop()
+	for {
+		n, err := st.PruneMessages(ctx, time.Now().Add(-maxAge))
+		if err != nil && ctx.Err() == nil {
+			log.Printf("retention: %v", err)
+		}
+		if n > 0 {
+			log.Printf("retention: deleted %d messages older than %s", n, maxAge)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
 		}
 	}
 }
