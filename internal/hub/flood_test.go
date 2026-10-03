@@ -230,3 +230,64 @@ func TestTrustedSessionIsExempt(t *testing.T) {
 		t.Fatalf("trusted session throttled: %v", e)
 	}
 }
+
+// The ghost-member race: a user's join to a room is still queued in that
+// room's worker when their connection ends. Disconnect parts them from the
+// room they were in at that moment, then the queued join is processed and
+// (before the fix) added a dead session that nobody would ever remove.
+func TestQueuedJoinAfterDisconnectDoesNotCreateGhost(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	ch, err := st.CreateChannel(ctx, "ghosttown", "SHA256:owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := h.GetOrLoadRoom(ctx, ch)
+
+	s := NewSession("SHA256:leaver", "1.1.1.1", "leaver")
+	h.Main().Join(s)
+	time.Sleep(100 * time.Millisecond)
+
+	other.Send(evJoin{sess: s}) // /join ghosttown: queued, not yet processed...
+	s.MarkClosed()              // ...and the connection ends first
+	h.Main().PartDisconnect(s)  // the disconnect parts the OLD room
+	time.Sleep(200 * time.Millisecond)
+
+	if got := other.Who(); len(got) != 0 {
+		t.Fatalf("dead session became a member of #ghosttown: %v", got)
+	}
+	if got := h.Main().Who(); len(got) != 0 {
+		t.Fatalf("dead session still in #main: %v", got)
+	}
+}
+
+// Belt and braces: anything that slips through is reaped when its connection
+// is found to be gone.
+func TestJanitorReapsSessionsWhoseConnectionEnded(t *testing.T) {
+	h, _ := adminHub(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	dead := NewSession("SHA256:dead", "1.1.1.1", "dead")
+	dead.SetDone(done)
+	live := NewSession("SHA256:live", "2.2.2.2", "live")
+	live.SetDone(make(chan struct{}))
+	h.Main().Join(dead)
+	h.Main().Join(live)
+	time.Sleep(100 * time.Millisecond)
+	if n := len(h.Main().Who()); n != 2 {
+		t.Fatalf("setup: %d members", n)
+	}
+
+	close(done) // the connection ended but nothing parted the session
+	h.StartJanitor(ctx, 50*time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for len(h.Main().Who()) != 1 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	who := h.Main().Who()
+	if len(who) != 1 || who[0] != "live" {
+		t.Fatalf("janitor should remove only the dead session, members now: %v", who)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,6 +26,14 @@ type Session struct {
 
 	everJoined bool
 
+	// closed is set when the SSH connection has ended. A join that is still
+	// queued in some room's actor when that happens must NOT add the dead
+	// session (that is how "ghost" members were created under load), and done
+	// lets a janitor notice sessions whose connection died without a part.
+	closed atomic.Bool
+	done   <-chan struct{}
+	id     uint64
+
 	joinNotice string // set before Join, consumed by Room.handleJoin
 
 	limiter    *tokenBucket // chat messages
@@ -40,6 +49,7 @@ type Session struct {
 
 func NewSession(fp, ip, nick string) *Session {
 	return &Session{
+		id:           nextSessionID.Add(1),
 		FP:           fp,
 		IP:           ip,
 		ConnectedAt:  time.Now(),
@@ -198,6 +208,32 @@ func (s *Session) Strike() bool {
 	}
 	s.strikes = append(kept, now)
 	return len(s.strikes) >= maxStrikes
+}
+
+var nextSessionID atomic.Uint64
+
+// ID is a process-unique number for this connection.
+func (s *Session) ID() uint64 { return s.id }
+
+// MarkClosed records that the connection is over (see closed).
+func (s *Session) MarkClosed() { s.closed.Store(true) }
+
+// SetDone supplies a channel that closes when the SSH connection ends.
+func (s *Session) SetDone(c <-chan struct{}) { s.done = c }
+
+// gone reports whether the connection has ended, by either signal.
+func (s *Session) gone() bool {
+	if s.closed.Load() {
+		return true
+	}
+	if s.done != nil {
+		select {
+		case <-s.done:
+			return true
+		default:
+		}
+	}
+	return false
 }
 
 // SetJoinNotice sets a private informational line the room delivers to this

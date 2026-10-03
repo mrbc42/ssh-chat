@@ -102,6 +102,7 @@ func disconnectMiddleware(h *hub.Hub) wish.Middleware {
 		return func(sess ssh.Session) {
 			next(sess)
 			if chatSess, ok := sess.Context().Value(sessionCtxKey{}).(*hub.Session); ok {
+				chatSess.MarkClosed() // before parting, so a still-queued join can't resurrect us
 				if room := chatSess.CurrentRoom(); room != nil {
 					room.PartDisconnect(chatSess)
 				}
@@ -127,6 +128,7 @@ func teaHandler(st *store.Store, h *hub.Hub) bm.Handler {
 
 		chatSess := hub.NewSession(fp, ip, nick)
 		sess.Context().SetValue(sessionCtxKey{}, chatSess)
+		chatSess.SetDone(sess.Context().Done())
 
 		pty, _, _ := sess.Pty()
 		width, height := pty.Window.Width, pty.Window.Height

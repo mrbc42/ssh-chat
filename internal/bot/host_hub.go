@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/mrbc42/ssh-chat/internal/hub"
@@ -67,8 +68,12 @@ func (hh *hubHost) Online() []Person {
 	return out
 }
 
+// OnlineCount uses the hub's shared once-a-second count instead of walking
+// every session, which the bot used to do on every single chat message.
+func (hh *hubHost) OnlineCount() int { return max(hh.h.TotalUsersOnline()-1, 0) }
+
 func person(s *hub.Session) Person {
-	return Person{ID: fmt.Sprintf("%p", s), Nick: s.Nick(), FP: s.FP, Anon: strings.HasPrefix(s.FP, "anon-")}
+	return Person{ID: strconv.FormatUint(s.ID(), 10), Nick: s.Nick(), FP: s.FP, Anon: strings.HasPrefix(s.FP, "anon-")}
 }
 
 // push never blocks a room goroutine; a full queue drops the event.

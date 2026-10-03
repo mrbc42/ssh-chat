@@ -169,6 +169,12 @@ func (r *Room) run() {
 				}
 			}
 			e.respond <- found
+		case evReap:
+			for sess := range r.members {
+				if sess.gone() {
+					r.handlePart(ctx, sess, partReasonDisconnect)
+				}
+			}
 		case evSessions:
 			all := make([]*Session, 0, len(r.members))
 			for sess := range r.members {
@@ -191,6 +197,12 @@ func (r *Room) run() {
 }
 
 func (r *Room) handleJoin(ctx context.Context, sess *Session) {
+	// A join can sit in this room's queue for seconds under load. If the user
+	// disconnected meanwhile (their part went to the room they were in then),
+	// adding them now would create a ghost member nobody ever removes.
+	if sess.gone() {
+		return
+	}
 	// Fetch scrollback before persisting/broadcasting this join, so the
 	// joiner's own "has joined" line doesn't show up duplicated in their
 	// own history replay.
@@ -278,6 +290,10 @@ func (r *Room) handleChat(ctx context.Context, sess *Session, body string) {
 // room is already unregistered from the hub by the caller.
 func (r *Room) handleShutdown(done chan struct{}) {
 	for sess := range r.members {
+		if sess.gone() {
+			delete(r.members, sess)
+			continue
+		}
 		line := infoLine(fmt.Sprintf("#%s was deleted. Moving you to #main.", r.Name))
 		sess.send(Outbound{Line: &line})
 		delete(r.members, sess)

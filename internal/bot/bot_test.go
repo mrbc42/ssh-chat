@@ -22,6 +22,7 @@ func (f *fakeHost) Say(t string)     { f.said = append(f.said, t) }
 func (f *fakeHost) Action(t string)  { f.actions = append(f.actions, t) }
 func (f *fakeHost) PM(n, t string)   { f.pms = append(f.pms, pmMsg{n, t}) }
 func (f *fakeHost) Online() []Person { return f.online }
+func (f *fakeHost) OnlineCount() int { return len(f.online) }
 func (f *fakeHost) reset()           { f.said, f.pms, f.actions = nil, nil, nil }
 func (f *fakeHost) joined(p Person)  { f.online = append(f.online, p) }
 func (f *fakeHost) left(p Person) {

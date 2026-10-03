@@ -50,7 +50,7 @@ func (b *Bot) onLogin(p Person) {
 	now := b.now()
 	b.humanActivity()
 	calls := b.st.incr("calls")
-	humans := len(b.host.Online())
+	humans := b.host.OnlineCount()
 	busy := b.busy(humans)
 	v := b.vars(p)
 	speakNormal := !busy || b.rng.Float64() < b.cfg.BusyGreetProbability
@@ -163,7 +163,7 @@ func (b *Bot) onLogoff(p Person) {
 	if b.tracked(p) {
 		b.st.touchLastSeen(p.FP, b.now())
 	}
-	humans := len(b.host.Online())
+	humans := b.host.OnlineCount()
 	if b.busy(humans) && b.rng.Float64() >= b.cfg.BusyGreetProbability {
 		return
 	}
@@ -176,7 +176,7 @@ func (b *Bot) onChat(p Person, body string) {
 		return
 	}
 	b.humanActivity()
-	humans := len(b.host.Online())
+	humans := b.host.OnlineCount()
 	if b.tracked(p) {
 		b.st.setNick(p.FP, p.Nick)
 		if b.st.bumpMessages(p.FP) == 1 && !b.busy(humans) {
@@ -200,7 +200,7 @@ func (b *Bot) Tick() {
 	b.checkTrivia(now)
 	b.scheduled(now)
 
-	humans := len(b.host.Online())
+	humans := b.host.OnlineCount()
 	if humans == 0 || !b.humanSince || b.busy(humans) {
 		return
 	}

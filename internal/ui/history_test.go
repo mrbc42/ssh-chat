@@ -191,3 +191,74 @@ func TestScrollbackRowsAndPaging(t *testing.T) {
 		t.Fatal("newest message missing after trimming")
 	}
 }
+
+// The escape-sequence fast path must produce exactly what lipgloss produces
+// for every kind of line, on every colour profile.
+func TestFastRowsMatchLipglossOutput(t *testing.T) {
+	at := time.Date(2026, 10, 3, 22, 45, 0, 0, time.UTC)
+	for _, profile := range []termenv.Profile{termenv.ANSI256, termenv.ANSI, termenv.TrueColor, termenv.Ascii} {
+		r := lipgloss.NewRenderer(io.Discard)
+		r.SetColorProfile(profile)
+		sty := newStyles(r)
+		nick := sty.NickStyle("bob")
+		pm := func(dir string) string {
+			return sty.PMLine.Render("[PM "+dir) + " " + nick.Render("bob") + sty.PMLine.Render("]")
+		}
+		ts := sty.Timestamp.Render("[22:45]")
+		cases := []struct {
+			line hub.Line
+			want string
+		}{
+			{hub.Line{Time: at, Kind: hub.KindChat, Sender: "bob", Body: "hello there"}, ts + " " + nick.Render("bob") + ": " + sty.ChatBody.Render("hello there")},
+			{hub.Line{Time: at, Kind: hub.KindAction, Sender: "bob", Body: "waves"}, ts + " * " + nick.Render("bob") + " " + sty.ChatBody.Render("waves")},
+			{hub.Line{Time: at, Kind: hub.KindSystem, Body: "*** x joined ***"}, ts + " " + sty.SystemLine.Render("*** x joined ***")},
+			{hub.Line{Time: at, Kind: hub.KindError, Body: "nope"}, ts + " " + sty.ErrorLine.Render("nope")},
+			{hub.Line{Time: at, Kind: hub.KindAdmin, Body: "[ADMIN] hi"}, ts + " " + sty.AdminLine.Render("[ADMIN] hi")},
+			{hub.Line{Time: at, Kind: hub.KindInfo, Body: "info text"}, ts + " " + sty.InfoLine.Render("info text")},
+			{hub.Line{Time: at, Kind: hub.KindPM, Sender: "bob", Dir: "from", Body: "psst"}, ts + " " + pm("from") + " " + sty.ChatBody.Render("psst")},
+			{hub.Line{Time: at, Kind: hub.KindPM, Sender: "bob", Dir: "to", Body: "psst"}, ts + " " + pm("to") + " " + sty.ChatBody.Render("psst")},
+		}
+		for _, c := range cases {
+			rows := renderRows(c.line, sty, 100)
+			if len(rows) != 1 || rows[0] != c.want {
+				t.Errorf("profile %v kind %s:\n got  %q\n want %q", profile, c.line.Kind, rows, c.want)
+			}
+		}
+	}
+}
+
+// The hand-built status bar must look like the lipgloss one: same text, same
+// width, coloured.
+func TestStatusBarFastPathKeepsWidthAndText(t *testing.T) {
+	r := lipgloss.NewRenderer(io.Discard)
+	r.SetColorProfile(termenv.ANSI256)
+	sty := newStyles(r)
+	st := statusBarState{Now: time.Date(2026, 10, 3, 22, 45, 7, 0, time.UTC), Room: hub.RoomInfo{Name: "main", Members: 3}, TotalOnline: 9, StartedAt: time.Now()}
+	for _, w := range []int{60, 80, 120, 25} {
+		got := renderStatusBar(st, w, sty)
+		if lipgloss.Width(got) != w {
+			t.Errorf("width %d: bar is %d wide", w, lipgloss.Width(got))
+		}
+		if !strings.Contains(got, "\x1b[") {
+			t.Errorf("width %d: bar lost its colours", w)
+		}
+		want := sty.StatusBar.Width(w).Render(strings.TrimSpace(ansiStrip(got)))
+		if ansiStrip(want) != ansiStrip(got) {
+			t.Errorf("width %d: text differs from lipgloss:\n got  %q\n want %q", w, ansiStrip(got), ansiStrip(want))
+		}
+	}
+}
+
+func ansiStrip(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0x1b {
+			for i < len(s) && !(s[i] >= 'A' && s[i] <= 'Z' || s[i] >= 'a' && s[i] <= 'z') {
+				i++
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}

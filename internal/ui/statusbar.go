@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mrbc42/ssh-chat/internal/hub"
 )
@@ -44,7 +45,13 @@ func renderStatusBar(st statusBarState, width int, sty *styles) string {
 		fields = fields[:len(fields)-1]
 	}
 	line := strings.Join(fields, " │ ")
-	return sty.StatusBar.Width(max(width, 0)).Render(line)
+	// Padded to the full width by hand and coloured with precomputed escape
+	// sequences, rather than a lipgloss Render per user per second.
+	pad := width - 2 - utf8.RuneCountInString(line)
+	if pad < 0 {
+		pad = 0
+	}
+	return sty.fBar.apply(" " + line + strings.Repeat(" ", pad) + " ")
 }
 
 func formatUptime(d time.Duration) string {

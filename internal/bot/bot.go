@@ -23,6 +23,7 @@ type Host interface {
 	Action(text string)   // an emote in #main
 	PM(nick, text string) // a private message
 	Online() []Person     // every connected human, server-wide (bot excluded)
+	OnlineCount() int     // len(Online()) without building the list; may be up to a second stale
 }
 
 type EventKind int

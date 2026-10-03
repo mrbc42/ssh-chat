@@ -3,6 +3,7 @@ package ui
 import (
 	"hash/fnv"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/charmbracelet/lipgloss"
@@ -23,6 +24,31 @@ var nickPalette = []string{
 	"#d7ff5f", // lime
 	"#af87ff", // lavender
 	"#5fffd7", // mint
+}
+
+// ansiStyle is a lipgloss style reduced to the escape sequences it emits, so
+// the hot path (styling every chat line, on every channel hop, for every user)
+// is two string concatenations instead of a full lipgloss Render. Profiling at
+// 1000 users showed lipgloss Render and the copying of its large Style struct
+// were ~70% of the server's CPU.
+type ansiStyle struct{ open, close string }
+
+// fastOf derives the open/close sequences by rendering a sentinel once. Only
+// valid for single-line, single-run text (which is all we apply it to).
+func fastOf(st lipgloss.Style) ansiStyle {
+	const mark = "\x00"
+	out := st.Render(mark)
+	if open, close, ok := strings.Cut(out, mark); ok {
+		return ansiStyle{open, close}
+	}
+	return ansiStyle{}
+}
+
+func (a ansiStyle) apply(s string) string {
+	if a.open == "" || s == "" {
+		return s
+	}
+	return a.open + s + a.close
 }
 
 func nickIndex(nick string) int {
@@ -65,6 +91,10 @@ type styles struct {
 	mu         sync.Mutex
 	nickStyles map[string]lipgloss.Style
 	nickSlots  []lipgloss.Style
+
+	// Precomputed escape-sequence forms of the styles used per chat line.
+	fTimestamp, fChat, fError, fInfo, fSystem, fAdmin, fPM, fBar ansiStyle
+	fNick                                                        []ansiStyle
 }
 
 // newStyles is used through a pointer: the whole struct is large and the UI
@@ -87,10 +117,18 @@ func newStyles(r *lipgloss.Renderer) *styles {
 		nickStyles:  map[string]lipgloss.Style{},
 	}
 	for _, hex := range nickPalette {
-		s.nickSlots = append(s.nickSlots, r.NewStyle().Foreground(c(hex)).Bold(true))
+		st := r.NewStyle().Foreground(c(hex)).Bold(true)
+		s.nickSlots = append(s.nickSlots, st)
+		s.fNick = append(s.fNick, fastOf(st))
 	}
+	s.fTimestamp, s.fChat, s.fError, s.fInfo = fastOf(s.Timestamp), fastOf(s.ChatBody), fastOf(s.ErrorLine), fastOf(s.InfoLine)
+	s.fSystem, s.fAdmin, s.fPM = fastOf(s.SystemLine), fastOf(s.AdminLine), fastOf(s.PMLine)
+	s.fBar = fastOf(s.StatusBar.UnsetPadding()) // padding is added by hand in renderStatusBar
 	return s
 }
+
+// nickFast is the escape-sequence form of a nickname's colour.
+func (s *styles) nickFast(nick string) ansiStyle { return s.fNick[nickIndex(nick)] }
 
 // NickStyle returns the (cached) chat colour style for a nickname.
 func (s *styles) NickStyle(nick string) lipgloss.Style {

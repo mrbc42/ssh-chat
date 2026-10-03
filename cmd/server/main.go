@@ -67,6 +67,7 @@ func main() {
 		go func() { log.Printf("pprof: %v", http.ListenAndServe(*pprofAddr, nil)) }()
 	}
 	h.SetVersion(version)
+	h.StartJanitor(context.Background(), 30*time.Second)
 	h.SetAfkThreshold(*afkAfter)
 	if *profanity {
 		var extra []string

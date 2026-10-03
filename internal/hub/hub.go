@@ -320,6 +320,25 @@ func (h *Hub) flooded(sess *Session) {
 	sess.send(Outbound{Disconnect: true})
 }
 
+// StartJanitor periodically removes members whose SSH connection has ended
+// but who were never parted (belt and braces for the ghost-member race).
+func (h *Hub) StartJanitor(ctx context.Context, every time.Duration) {
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				for _, r := range h.loadedRooms() {
+					r.Send(evReap{})
+				}
+			}
+		}
+	}()
+}
+
 // mask applies the configured word filter.
 func (h *Hub) mask(s string) string { return h.filter.Mask(s) }
 
