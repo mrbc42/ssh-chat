@@ -88,6 +88,7 @@ func (u *user) roomNow() string {
 
 type conn struct {
 	u        *user
+	client   *ssh.Client
 	sess     *ssh.Session
 	in       io.WriteCloser
 	mu       sync.Mutex
@@ -135,9 +136,10 @@ func count(name string) {
 }
 
 var (
-	nChannels int
-	endAt     time.Time
-	seqNo     int64
+	nChannels       int
+	leakConnections bool
+	endAt           time.Time
+	seqNo           int64
 )
 
 func roomName(i int) string { return fmt.Sprintf("room%02d", i+1) }
@@ -151,6 +153,7 @@ func main() {
 	ramp := flag.Duration("ramp", 25*time.Second, "spread the first connections over this long")
 	minGap := flag.Duration("min", 4*time.Second, "shortest pause between one user's messages")
 	maxGap := flag.Duration("max", 12*time.Second, "longest pause between one user's messages")
+	flag.BoolVar(&leakConnections, "leak", false, "close each session but leave its SSH connection open (a rude client)")
 	seed := flag.Int64("seed", time.Now().UnixNano(), "random seed")
 	flag.Parse()
 	nChannels = *channels
@@ -344,7 +347,7 @@ func dial(addr string, cfg *ssh.ClientConfig, u *user) *conn {
 	if err := sess.Shell(); err != nil {
 		return nil
 	}
-	c := &conn{u: u, sess: sess, in: in, seen: map[string]bool{}, sawErr: map[string]bool{}}
+	c := &conn{u: u, client: cl, sess: sess, in: in, seen: map[string]bool{}, sawErr: map[string]bool{}}
 	ready := make(chan struct{})
 	go func() {
 		var tail string
@@ -433,6 +436,11 @@ func (c *conn) quit() {
 	time.Sleep(300 * time.Millisecond)
 	if c.sess != nil {
 		c.sess.Close()
+	}
+	// A real client closes the whole connection. -leak keeps it open to
+	// reproduce the rude-client case (session closed, connection kept).
+	if c.client != nil && !leakConnections {
+		c.client.Close()
 	}
 }
 

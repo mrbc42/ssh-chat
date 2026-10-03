@@ -11,10 +11,13 @@ import (
 
 const scrollbackReplayLimit = 50
 
-// Whole-channel message cap: a burst of 40, sustained 15 per second.
+// Whole-channel message cap: a burst of 120, sustained 40 per second. A busy
+// channel of ~150 people legitimately produces ~20 messages a second; the cap
+// is only meant to stop a swarm of connections from swamping a channel (one IP
+// is already limited to 10 connections at 5 messages a second each).
 const (
-	roomBurst     = 40
-	roomPerSecond = 15
+	roomBurst     = 120
+	roomPerSecond = 40
 )
 
 // Room is an actor: all of its mutable state (members, locked, topic,
@@ -279,7 +282,7 @@ func (r *Room) handleChat(ctx context.Context, sess *Session, body string) {
 		return
 	}
 	m := store.Message{ChannelID: r.ID, SenderFP: sess.FP, SenderName: sess.Nick(), Body: body, Kind: "msg"}
-	_, _ = r.store.AppendMessage(ctx, m)
+	r.store.AppendMessageAsync(m)
 	r.broadcastAll(chatLine(sess.Nick(), body))
 	if o := r.hub.observer; o != nil {
 		o.OnChat(r.Name, sess, body, false)
@@ -308,7 +311,7 @@ func (r *Room) handleAction(ctx context.Context, sess *Session, body string) {
 		return
 	}
 	m := store.Message{ChannelID: r.ID, SenderFP: sess.FP, SenderName: sess.Nick(), Body: body, Kind: "action"}
-	_, _ = r.store.AppendMessage(ctx, m)
+	r.store.AppendMessageAsync(m)
 	r.broadcastAll(actionLine(sess.Nick(), body))
 	if o := r.hub.observer; o != nil {
 		o.OnChat(r.Name, sess, body, true)
@@ -338,11 +341,11 @@ func (r *Room) broadcastSystem(ctx context.Context, text string, persist bool) {
 }
 
 func (r *Room) persistSystem(ctx context.Context, text string) {
-	_, _ = r.store.AppendMessage(ctx, store.Message{ChannelID: r.ID, SenderFP: "system", SenderName: "system", Body: text, Kind: "system"})
+	r.store.AppendMessageAsync(store.Message{ChannelID: r.ID, SenderFP: "system", SenderName: "system", Body: text, Kind: "system"})
 }
 
 func (r *Room) persistAdmin(ctx context.Context, text string) {
-	_, _ = r.store.AppendMessage(ctx, store.Message{ChannelID: r.ID, SenderFP: "admin", SenderName: "admin", Body: text, Kind: "admin"})
+	r.store.AppendMessageAsync(store.Message{ChannelID: r.ID, SenderFP: "admin", SenderName: "admin", Body: text, Kind: "admin"})
 }
 
 func (r *Room) broadcastAll(line Line) {

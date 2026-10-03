@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"expvar"
 	"sort"
 	"strings"
 	"time"
@@ -150,13 +151,23 @@ func (m *Model) viewHeight() int { return max(m.height-fixedRows, 1) }
 // layout re-renders every line for the current size. It is only needed when
 // the size or the set of lines changes wholesale (resize, room switch,
 // /clear); a single new message goes through appendLine instead.
+// Counters for diagnosing load (visible at /debug/vars when -pprof is on).
+var (
+	statLayouts     = expvar.NewInt("ui_layouts")
+	statLayoutLines = expvar.NewInt("ui_layout_lines")
+	statWindowSize  = expvar.NewInt("ui_windowsize_msgs")
+	statSwitchRooms = expvar.NewInt("ui_switchrooms")
+)
+
 func (m *Model) layout() {
+	statLayouts.Add(1)
+	statLayoutLines.Add(int64(len(m.lines)))
 	m.lastNick = "" // force the prompt width to be recomputed for the new size
 	m.syncPrompt()
 	m.banner = m.sty.Banner.Width(m.width).Align(lipgloss.Center).Render(bannerText)
 	m.rows, m.rowsPer, m.scroll = nil, make([]int, len(m.lines)), 0
 	for i, l := range m.lines {
-		r := renderRows(l, m.sty, m.width)
+		r := cachedRows(l, m.sty, m.width)
 		m.rowsPer[i] = len(r)
 		m.rows = append(m.rows, r...)
 	}
@@ -177,7 +188,7 @@ func (m *Model) refreshBar() {
 const maxScrollbackLines = 2000
 
 func (m *Model) appendLine(line hub.Line) {
-	r := renderRows(line, m.sty, m.width) // only the new line is styled
+	r := cachedRows(line, m.sty, m.width) // styled once for everyone, not once per recipient
 	m.lines = append(m.lines, line)
 	m.rowsPer = append(m.rowsPer, len(r))
 	m.rows = append(m.rows, r...)
@@ -224,6 +235,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.syncPrompt()
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		statWindowSize.Add(1)
 		m.width = msg.Width
 		m.height = msg.Height
 		m.layout()
@@ -251,6 +263,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lines = nil
 			m.layout()
 		} else if ob.SwitchRoom != nil {
+			statSwitchRooms.Add(1)
 			m.roomInfo = *ob.SwitchRoom
 			m.lines = append([]hub.Line{}, ob.Scrollback...)
 			m.layout()

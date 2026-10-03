@@ -86,6 +86,7 @@ type styles struct {
 	TooNarrow   lipgloss.Style
 
 	renderer *lipgloss.Renderer
+	profile  termenv.Profile // colour profile; part of the render-cache key
 
 	// Nick styles are built once per name and per palette slot, not per line.
 	mu         sync.Mutex
@@ -114,6 +115,7 @@ func newStyles(r *lipgloss.Renderer) *styles {
 		PMLine:      r.NewStyle().Foreground(c("#af87ff")).Bold(true),
 		TooNarrow:   r.NewStyle().Foreground(c("#ff5f5f")).Bold(true),
 		renderer:    r,
+		profile:     r.ColorProfile(),
 		nickStyles:  map[string]lipgloss.Style{},
 	}
 	for _, hex := range nickPalette {

@@ -58,7 +58,7 @@ func New(addr, hostKeyPath string, st *store.Store, h *hub.Hub) (*ssh.Server, er
 			// EOF/disconnect/quit), so the session is parted from whatever
 			// room it was last in instead of lingering as a ghost member.
 			disconnectMiddleware(h),
-			bm.Middleware(teaHandler(st, h)),
+			teaMiddleware(teaHandler(st, h)),
 			activeterm.Middleware(),
 			logging.Middleware(),
 			ratelimit.Middleware(connLimiter),

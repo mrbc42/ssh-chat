@@ -262,3 +262,43 @@ func ansiStrip(s string) string {
 	}
 	return b.String()
 }
+
+func TestRowCacheIsTransparent(t *testing.T) {
+	at := time.Date(2026, 10, 3, 22, 45, 30, 0, time.UTC)
+	line := hub.Line{Time: at, Kind: hub.KindChat, Sender: "bob", Body: "the quick brown fox jumps over the lazy dog again and again"}
+	mk := func(profile termenv.Profile) *styles {
+		r := lipgloss.NewRenderer(io.Discard)
+		r.SetColorProfile(profile)
+		return newStyles(r)
+	}
+	a, b := mk(termenv.TrueColor), mk(termenv.ANSI256)
+
+	for _, width := range []int{80, 50} {
+		for _, sty := range []*styles{a, b} {
+			want := renderRows(line, sty, width)
+			for i := 0; i < 2; i++ { // miss, then hit
+				got := cachedRows(line, sty, width)
+				if strings.Join(got, "\n") != strings.Join(want, "\n") {
+					t.Fatalf("width %d profile %v pass %d: cached output differs", width, sty.profile, i)
+				}
+			}
+		}
+	}
+	// Different width / profile / minute / text must not share an entry.
+	if strings.Join(cachedRows(line, a, 80), "") == strings.Join(cachedRows(line, a, 50), "") {
+		t.Error("width not part of the cache key")
+	}
+	if strings.Join(cachedRows(line, a, 80), "") == strings.Join(cachedRows(line, b, 80), "") {
+		t.Error("colour profile not part of the cache key")
+	}
+	later := line
+	later.Time = at.Add(2 * time.Minute)
+	if strings.Join(cachedRows(line, a, 80), "") == strings.Join(cachedRows(later, a, 80), "") {
+		t.Error("timestamp minute not part of the cache key")
+	}
+	other := line
+	other.Body = "something else"
+	if strings.Join(cachedRows(line, a, 80), "") == strings.Join(cachedRows(other, a, 80), "") {
+		t.Error("body not part of the cache key")
+	}
+}
