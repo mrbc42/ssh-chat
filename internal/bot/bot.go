@@ -209,9 +209,9 @@ func (b *Bot) emit(batch []outLine) {
 		}
 	}
 	b.globalWin = kept
-	lines := 0 // count real output lines, after wrapping
+	lines := 0 // count real chat messages, after any splitting of over-long text
 	for _, l := range batch {
-		lines += len(wrap(l.text, b.cfg.Wrap))
+		lines += len(chunk(l.text, b.cfg.MaxMessageChars))
 	}
 	if len(b.globalWin)+lines > b.cfg.RateGlobalPerMin {
 		return // over the global cap: stay silent rather than flood the room
@@ -229,7 +229,8 @@ func (b *Bot) emit(batch []outLine) {
 	}
 }
 
-// deliver wraps, paces and sends a batch. It runs on the speaker goroutine
+// deliver paces and sends a batch, one chat message per item (the chat
+// screen does the visual wrapping). It runs on the speaker goroutine
 // (or inline in tests), so it must not touch other Bot state.
 func (b *Bot) deliver(batch []outLine) {
 	lo, hi := b.cfg.TypingDelayMs[0], b.cfg.TypingDelayMs[1]
@@ -244,7 +245,7 @@ func (b *Bot) deliver(batch []outLine) {
 		b.sleep(time.Duration(d) * time.Millisecond)
 	}
 	for _, l := range batch {
-		for _, line := range wrap(l.text, b.cfg.Wrap) {
+		for _, line := range chunk(l.text, b.cfg.MaxMessageChars) {
 			if strings.HasPrefix(line, "/") {
 				line = "." + line // never let echoed text become a server command
 			}

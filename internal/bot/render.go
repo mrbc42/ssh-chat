@@ -30,8 +30,10 @@ func clean(s string, max int) string {
 	return b.String()
 }
 
-// wrap word-wraps s to width columns (long words are hard-split).
-func wrap(s string, width int) []string {
+// chunk splits s at word boundaries into pieces of at most max characters
+// (long words are hard-split). Normal replies are shorter than max and come
+// back as a single piece; the chat screen wraps them to the terminal width.
+func chunk(s string, width int) []string {
 	var lines []string
 	cur := ""
 	flush := func() {

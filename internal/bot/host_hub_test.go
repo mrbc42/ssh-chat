@@ -52,7 +52,7 @@ func TestBotIsAParticipantInTheRealHub(t *testing.T) {
 	}
 	data := filepath.Join(dir, "data")
 	_ = os.MkdirAll(data, 0o755)
-	_ = os.WriteFile(filepath.Join(data, "config.json"), []byte(`{"typing_delay_ms":[0,0],"wrap":1000}`), 0o644)
+	_ = os.WriteFile(filepath.Join(data, "config.json"), []byte(`{"typing_delay_ms":[0,0]}`), 0o644)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

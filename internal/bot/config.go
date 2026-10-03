@@ -26,7 +26,7 @@ type Config struct {
 	TypingIndicator       bool    `json:"typing_indicator"`
 	Baud                  int     `json:"baud"` // 0 = off
 	Colour                bool    `json:"colour"`
-	Wrap                  int     `json:"wrap"`
+	MaxMessageChars       int     `json:"max_message_chars"`
 	IdleMinutes           int     `json:"idle_minutes"`
 	LonelyMinutes         int     `json:"lonely_minutes"`
 	LonelyCooldownMinutes int     `json:"lonely_cooldown_minutes"`
@@ -116,7 +116,7 @@ type Content struct {
 func defaultConfig() Config {
 	return Config{
 		Nick: "SysOp-Gus", Board: "Gus's Garage BBS",
-		TypingDelayMs: [2]int{1000, 3000}, Wrap: 60,
+		TypingDelayMs: [2]int{1000, 3000}, MaxMessageChars: 400,
 		IdleMinutes: 25, LonelyMinutes: 12, LonelyCooldownMinutes: 120,
 		BusyThreshold: 6, BusyGreetProbability: 0.25, RemarkProbability: 0.35,
 		RapidReconnectSeconds: 120, RatePerUserPerMin: 6, RateGlobalPerMin: 30,
@@ -166,8 +166,8 @@ func Load(dir string) (Config, *Content, error) {
 		cfg.loc = loc
 	}
 	cfg.locName = cfg.loc.String()
-	if cfg.Wrap < 20 {
-		cfg.Wrap = 60
+	if cfg.MaxMessageChars < 40 || cfg.MaxMessageChars > 480 {
+		cfg.MaxMessageChars = 400 // the server truncates chat lines at 500
 	}
 	if cfg.RecentMemory < 1 {
 		cfg.RecentMemory = 3

@@ -54,7 +54,6 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	b.cfg.loc = time.UTC
-	b.cfg.Wrap = 1000           // tests compare whole pool lines; TestOutputWrapsAndPaces sets the real width
 	b.cfg.RemarkProbability = 0 // opt in per test
 	e.b = b
 	t.Cleanup(func() { _ = b.st.close() })
@@ -709,29 +708,43 @@ func TestSeenAndWho(t *testing.T) {
 	}
 }
 
-func TestOutputWrapsAndPaces(t *testing.T) {
+func TestOutputOneMessagePerReplyAndPaces(t *testing.T) {
 	e := newEnv(t)
 	var slept []time.Duration
 	e.b.sleep = func(d time.Duration) { slept = append(slept, d) }
-	e.b.cfg.Wrap = 60
 	e.b.cfg.TypingIndicator = true
 	e.b.cfg.Baud = 2400
-	e.b.say(kindPlain, strings.Repeat("word ", 60))
+
+	// A normal sentence is ONE chat message, however long: the chat screen
+	// wraps it to the terminal. (Pre-wrapping it here used to split a
+	// sentence across several messages, each with its own timestamp.)
+	sentence := "Another caller: lucky-wombat. The modem pool was getting lonely."
+	e.b.say(kindPlain, sentence)
+	if len(e.h.said) != 1 || e.h.said[0] != sentence {
+		t.Fatalf("a sentence must be sent as a single message, got %q", e.h.said)
+	}
+
+	// Only text longer than the server's message limit is split, at word
+	// boundaries, with nothing lost.
+	e.h.reset()
+	long := strings.TrimSpace(strings.Repeat("word ", 300))
+	e.b.say(kindPlain, long)
+	if len(e.h.said) < 3 {
+		t.Fatalf("over-long text should be split into several messages: %d", len(e.h.said))
+	}
 	for _, l := range e.h.said {
-		// With the server's "[HH:MM] SysOp-Gus: " prefix (19 chars) a line must
-		// still fit an 80-column terminal.
-		if len(l) > e.b.cfg.Wrap || len(l)+len("[02:29] SysOp-Gus: ") > 80 {
-			t.Fatalf("line too wide: %d chars (wrap %d)", len(l), e.b.cfg.Wrap)
+		if len(l) > e.b.cfg.MaxMessageChars {
+			t.Fatalf("message of %d chars exceeds the %d limit", len(l), e.b.cfg.MaxMessageChars)
 		}
 	}
-	if len(e.h.said) < 3 {
-		t.Fatalf("long text should wrap onto several lines: %v", e.h.said)
+	if strings.Join(e.h.said, " ") != long {
+		t.Fatal("splitting changed the text")
 	}
-	if len(e.h.actions) != 1 || !strings.Contains(e.h.actions[0], "typing") {
+	if len(e.h.actions) == 0 || !strings.Contains(e.h.actions[0], "typing") {
 		t.Fatalf("typing indicator missing: %v", e.h.actions)
 	}
 	if len(slept) < len(e.h.said)+1 {
-		t.Fatalf("typing delay and baud pacing not applied: %d sleeps for %d lines", len(slept), len(e.h.said))
+		t.Fatalf("typing delay and baud pacing not applied: %d sleeps for %d messages", len(slept), len(e.h.said))
 	}
 	// Disabled: no delay at all.
 	e2 := newEnv(t)

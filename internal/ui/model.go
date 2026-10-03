@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -391,39 +390,93 @@ func (m *Model) setCompletion(name string) {
 	m.textinput.CursorEnd()
 }
 
-// renderRows styles one chat line and word-wraps it to width.
+// renderRows styles one chat line and word-wraps it to width. Continuation
+// rows are indented under the start of the message text, so a wrapped
+// sentence reads as one message rather than as several.
 func renderRows(l hub.Line, sty styles, width int) []string {
-	rendered := renderOneLine(l, sty)
-	if width > 0 {
-		rendered = sty.renderer.NewStyle().Width(width).Render(rendered)
+	prefix, body, style := splitLine(l, sty)
+	pw := lipgloss.Width(prefix)
+	// Too narrow (or a very long nick) for a hanging indent: wrap flush left.
+	if width <= 0 || pw > width/2 {
+		rendered := prefix + style.Render(body)
+		if width > 0 {
+			rendered = sty.renderer.NewStyle().Width(width).Render(rendered)
+		}
+		return strings.Split(rendered, "\n")
 	}
-	return strings.Split(rendered, "\n")
+	indent := strings.Repeat(" ", pw)
+	var rows []string
+	for i, part := range wrapPlain(body, width-pw) {
+		if i == 0 {
+			rows = append(rows, prefix+style.Render(part))
+		} else {
+			rows = append(rows, indent+style.Render(part))
+		}
+	}
+	if len(rows) == 0 {
+		rows = []string{prefix}
+	}
+	return rows
 }
 
-func renderOneLine(l hub.Line, sty styles) string {
+// wrapPlain word-wraps plain text to width columns, hard-splitting any word
+// longer than a row.
+func wrapPlain(s string, width int) []string {
+	var rows []string
+	cur := ""
+	for _, w := range strings.Fields(s) {
+		for lipgloss.Width(w) > width {
+			if cur != "" {
+				rows, cur = append(rows, cur), ""
+			}
+			r := []rune(w)
+			n := 0
+			for n < len(r) && lipgloss.Width(string(r[:n+1])) <= width {
+				n++
+			}
+			if n == 0 {
+				n = 1
+			}
+			rows, w = append(rows, string(r[:n])), string(r[n:])
+		}
+		switch {
+		case cur == "":
+			cur = w
+		case lipgloss.Width(cur)+1+lipgloss.Width(w) <= width:
+			cur += " " + w
+		default:
+			rows, cur = append(rows, cur), w
+		}
+	}
+	if cur != "" {
+		rows = append(rows, cur)
+	}
+	return rows
+}
+
+// splitLine returns the styled leader ("[15:04] nick: "), the plain message
+// text, and the style to apply to each row of that text.
+func splitLine(l hub.Line, sty styles) (prefix, body string, style lipgloss.Style) {
 	ts := sty.Timestamp.Render("[" + l.Time.Format("15:04") + "]")
 	switch l.Kind {
 	case hub.KindChat:
-		nick := sty.NickStyle(l.Sender).Render(l.Sender)
-		return fmt.Sprintf("%s %s: %s", ts, nick, sty.ChatBody.Render(l.Body))
+		return ts + " " + sty.NickStyle(l.Sender).Render(l.Sender) + ": ", l.Body, sty.ChatBody
 	case hub.KindAction:
-		nick := sty.NickStyle(l.Sender).Render(l.Sender)
-		return fmt.Sprintf("%s * %s %s", ts, nick, sty.ChatBody.Render(l.Body))
+		return ts + " * " + sty.NickStyle(l.Sender).Render(l.Sender) + " ", l.Body, sty.ChatBody
 	case hub.KindSystem:
-		return ts + " " + sty.SystemLine.Render(l.Body)
+		return ts + " ", l.Body, sty.SystemLine
 	case hub.KindError:
-		return ts + " " + sty.ErrorLine.Render(l.Body)
+		return ts + " ", l.Body, sty.ErrorLine
 	case hub.KindAdmin:
-		return ts + " " + sty.AdminLine.Render(l.Body)
+		return ts + " ", l.Body, sty.AdminLine
 	case hub.KindPM:
 		arrow := "from"
 		if l.Dir == "to" {
 			arrow = "to"
 		}
-		nick := sty.NickStyle(l.Sender).Render(l.Sender)
-		prefix := sty.PMLine.Render(fmt.Sprintf("[PM %s", arrow)) + " " + nick + sty.PMLine.Render("]")
-		return fmt.Sprintf("%s %s %s", ts, prefix, sty.ChatBody.Render(l.Body))
+		tag := sty.PMLine.Render("[PM "+arrow) + " " + sty.NickStyle(l.Sender).Render(l.Sender) + sty.PMLine.Render("]")
+		return ts + " " + tag + " ", l.Body, sty.ChatBody
 	default: // KindInfo
-		return ts + " " + sty.InfoLine.Render(l.Body)
+		return ts + " ", l.Body, sty.InfoLine
 	}
 }
