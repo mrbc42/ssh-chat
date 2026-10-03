@@ -21,6 +21,10 @@ import (
 	"github.com/mrbc42/ssh-chat/internal/store"
 )
 
+// version is set at build time (-ldflags "-X main.version=…", from the
+// Containerfile's VERSION build arg); "dev" for an unlabelled build.
+var version = "dev"
+
 func main() {
 	addr := flag.String("addr", ":2222", "address to listen on")
 	dbPath := flag.String("db", "./data/chat.db", "path to the SQLite database file")
@@ -56,6 +60,7 @@ func main() {
 		log.Fatalf("creating hub: %v", err)
 	}
 
+	h.SetVersion(version)
 	h.SetAfkThreshold(*afkAfter)
 	if *profanity {
 		var extra []string
@@ -110,7 +115,7 @@ func main() {
 		_ = srv.Close()
 	}()
 
-	log.Printf("ssh-chat listening on %s (db=%s)", *addr, *dbPath)
+	log.Printf("ssh-chat %s listening on %s (db=%s)", version, *addr, *dbPath)
 	if err := srv.ListenAndServe(); err != nil {
 		log.Printf("server stopped: %v", err)
 	}

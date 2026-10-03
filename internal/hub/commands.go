@@ -361,7 +361,14 @@ func canUse(c *CmdCtx, cmd *Command) bool {
 }
 
 func cmdHelp(c *CmdCtx, _ []string) []string {
-	lines := []string{"Available commands:"}
+	v := c.Hub.version
+	if v == "" {
+		v = "dev"
+	}
+	if v[0] >= '0' && v[0] <= '9' {
+		v = "v" + v
+	}
+	lines := []string{"ssh-chat server " + v, "Available commands:"}
 	for _, name := range orderedNames {
 		cmd := registry[name]
 		if !canUse(c, cmd) {

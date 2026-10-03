@@ -24,6 +24,7 @@ type Hub struct {
 	afkAfter  time.Duration
 	filter    *filter.Filter
 	observer  Observer
+	version   string
 
 	mu    sync.RWMutex
 	rooms map[string]*Room // keyed by lowercased channel name
@@ -47,6 +48,9 @@ func NewHub(st *store.Store, adminFPs map[string]bool) (*Hub, error) {
 	h.rooms[strings.ToLower(ch.Name)] = h.main
 	return h, nil
 }
+
+// SetVersion records the server's build version, shown at the top of /help.
+func (h *Hub) SetVersion(v string) { h.version = v }
 
 // SetAfkThreshold overrides how long a session may idle before being marked
 // away. Call before serving connections.

@@ -245,6 +245,12 @@ func TestHelpListsOnlyUsableCommands(t *testing.T) {
 	adminOnly := []string{"/gban", "/gunban", "/gbans", "/delroom", "/adminlog", "/broadcast"}
 	opOnly := []string{"/kick", "/ban", "/lock", "/topic", "/op ", "/announce"}
 
+	// The server version is the first line of /help.
+	h.SetVersion("1.2.3")
+	if first, _, _ := strings.Cut(helpText(t, h, user), "\n"); first != "ssh-chat server v1.2.3" {
+		t.Errorf("first /help line = %q, want the server version", first)
+	}
+
 	// Plain user in #main: no admin commands, no operator commands.
 	got := helpText(t, h, user)
 	for _, c := range append(adminOnly, opOnly...) {
