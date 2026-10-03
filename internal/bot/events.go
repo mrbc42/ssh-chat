@@ -33,6 +33,19 @@ func (b *Bot) daysBetween(a, z time.Time) int {
 	return int(t2.Sub(t1).Hours() / 24)
 }
 
+// candidate is a possible public remark about a login; commit (optional)
+// records that it was actually used.
+type candidate struct {
+	text   string
+	commit func()
+}
+
+// onLogin makes AT MOST ONE public comment about the person who just
+// connected, choosing the most notable: caller milestone, anniversary, visit
+// milestone, long absence, node-count record, then (if none) a personal
+// greeting, a time-of-day remark in place of a plain "welcome back", and
+// finally the plain entrance line. Private extras (keyless advice, delivered
+// !tell messages) go by PM and do not count.
 func (b *Bot) onLogin(p Person) {
 	now := b.now()
 	b.humanActivity()
@@ -40,27 +53,38 @@ func (b *Bot) onLogin(p Person) {
 	humans := len(b.host.Online())
 	busy := b.busy(humans)
 	v := b.vars(p)
-
-	var lines []string
 	speakNormal := !busy || b.rng.Float64() < b.cfg.BusyGreetProbability
-	if speakNormal {
-		lines = append(lines, b.text("login", v))
-	}
 
+	var specials []candidate // in priority order
+	var greeting string
+	var returning bool // greeting is a plain "welcome back" a time-of-day remark may replace
 	var tellsFor string
-	var private []string // for this user only, sent as a PM after the public lines
+	var private []string // for this user only, sent as PMs after the public line
+
+	if contains(b.cfg.CallerMilestones, calls) {
+		specials = append(specials, candidate{text: b.text("milestone_caller", b.vars(p, "n", strconv.Itoa(calls)))})
+	}
 	switch {
 	case p.Anon:
 		// The "you have no key" advice is nobody else's business: PM it.
 		private = append(private, b.text("greet_anon", v))
 	case b.st.isOptedOut(p.FP):
-		// untracked by choice: entrance line only
+		// untracked by choice: nothing beyond the entrance line
 	default:
 		prev, existed, cur := b.st.recordVisit(p.FP, p.Nick, now)
 		tellsFor = p.FP
+		if years := int(now.Sub(cur.FirstSeen) / (365 * 24 * time.Hour)); years >= 1 && years > cur.Anniv {
+			specials = append(specials, candidate{
+				text:   b.text("anniversary", b.vars(p, "years", strconv.Itoa(years))),
+				commit: func() { b.st.setAnniv(p.FP, years) }, // only once it has actually been announced
+			})
+		}
+		if contains(b.cfg.VisitMilestones, cur.Visits) {
+			specials = append(specials, candidate{text: b.text("milestone_visit", b.vars(p, "n", strconv.Itoa(cur.Visits)))})
+		}
 		if !existed {
 			if speakNormal {
-				lines = append(lines, b.text("greet_first", v))
+				greeting = b.text("greet_first", v)
 			}
 		} else {
 			gap := now.Sub(prev.LastSeen)
@@ -68,45 +92,47 @@ func (b *Bot) onLogin(p Person) {
 			dv := b.vars(p, "days", strconv.Itoa(days))
 			switch {
 			case gap >= 365*24*time.Hour:
-				lines = append(lines, b.text("absence_365", dv)) // long absences are always called out
+				specials = append(specials, candidate{text: b.text("absence_365", dv)})
 			case gap >= 90*24*time.Hour:
-				lines = append(lines, b.text("absence_90", dv))
+				specials = append(specials, candidate{text: b.text("absence_90", dv)})
 			case gap >= 30*24*time.Hour:
-				lines = append(lines, b.text("absence_30", dv))
+				specials = append(specials, candidate{text: b.text("absence_30", dv)})
 			case !speakNormal:
 			case gap < time.Duration(b.cfg.RapidReconnectSeconds)*time.Second:
-				lines = append(lines, b.text("greet_rapid", v))
+				greeting = b.text("greet_rapid", v)
 			case days >= 1:
-				lines = append(lines, b.text("greet_returning", dv))
+				greeting, returning = b.text("greet_returning", dv), true
 			default:
-				lines = append(lines, b.text("greet_returning_today", v))
+				greeting, returning = b.text("greet_returning_today", v), true
 			}
-		}
-		if contains(b.cfg.VisitMilestones, cur.Visits) {
-			lines = append(lines, b.text("milestone_visit", b.vars(p, "n", strconv.Itoa(cur.Visits))))
-		}
-		if years := int(now.Sub(cur.FirstSeen) / (365 * 24 * time.Hour)); years >= 1 && years > cur.Anniv {
-			b.st.setAnniv(p.FP, years)
-			lines = append(lines, b.text("anniversary", b.vars(p, "years", strconv.Itoa(years))))
-		}
-	}
-
-	if contains(b.cfg.CallerMilestones, calls) {
-		lines = append(lines, b.text("milestone_caller", b.vars(p, "n", strconv.Itoa(calls))))
-	}
-	if speakNormal && !busy && b.rng.Float64() < b.cfg.RemarkProbability {
-		if r := b.timeRemark(now, v); r != "" {
-			lines = append(lines, r)
 		}
 	}
 	if humans > b.nodeRecord {
 		if humans >= 3 && b.nodeRecord > 0 {
-			lines = append(lines, b.text("node_record", b.vars(p, "n", strconv.Itoa(humans))))
+			specials = append(specials, candidate{text: b.text("node_record", b.vars(p, "n", strconv.Itoa(humans)))})
 		}
 		b.nodeRecord = humans
 		b.st.set("node_record", strconv.Itoa(humans))
 	}
-	b.say(kindEvent, lines...)
+
+	var line string
+	switch {
+	case len(specials) > 0:
+		line = specials[0].text
+		if specials[0].commit != nil {
+			specials[0].commit()
+		}
+	case greeting != "":
+		line = greeting
+		if returning && !busy && b.rng.Float64() < b.cfg.RemarkProbability {
+			if r := b.timeRemark(now, v); r != "" {
+				line = r
+			}
+		}
+	case speakNormal:
+		line = b.text("login", v)
+	}
+	b.say(kindEvent, line) // say() skips an empty line
 	for _, t := range private {
 		b.pm(p.Nick, t)
 	}

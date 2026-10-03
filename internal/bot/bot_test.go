@@ -147,12 +147,8 @@ func TestJoinAndLeave(t *testing.T) {
 	e := newEnv(t)
 	dave := keyed("dave", "Dave")
 	e.login(dave)
-	out := e.said()
-	if !strings.Contains(out, "Dave") || len(e.h.said) < 2 {
-		t.Fatalf("expected entrance + first-time greeting naming Dave, got %q", out)
-	}
-	if !e.inPool("greet_first", e.b.vars(dave), e.h.said[1]) {
-		t.Errorf("second line should be a greet_first variant, got %q", e.h.said[1])
+	if len(e.h.said) != 1 || !e.inPool("greet_first", e.b.vars(dave), e.h.said[0]) {
+		t.Fatalf("expected exactly one comment, a greet_first variant naming Dave, got %q", e.h.said)
 	}
 
 	e.h.reset()
@@ -165,8 +161,8 @@ func TestJoinAndLeave(t *testing.T) {
 	e.advance(5 * 24 * time.Hour)
 	e.h.reset()
 	e.login(dave)
-	if !e.inPool("greet_returning", e.b.vars(dave, "days", "5"), e.h.said[1]) {
-		t.Fatalf("want greet_returning with 5 days, got %v", e.h.said)
+	if len(e.h.said) != 1 || !e.inPool("greet_returning", e.b.vars(dave, "days", "5"), e.h.said[0]) {
+		t.Fatalf("want exactly one greet_returning comment with 5 days, got %v", e.h.said)
 	}
 
 	// Quick redial gets the rapid-reconnect joke.
@@ -174,8 +170,8 @@ func TestJoinAndLeave(t *testing.T) {
 	e.advance(30 * time.Second)
 	e.h.reset()
 	e.login(dave)
-	if !e.inPool("greet_rapid", e.b.vars(dave), e.h.said[1]) {
-		t.Fatalf("want greet_rapid, got %v", e.h.said)
+	if len(e.h.said) != 1 || !e.inPool("greet_rapid", e.b.vars(dave), e.h.said[0]) {
+		t.Fatalf("want exactly one greet_rapid comment, got %v", e.h.said)
 	}
 }
 
@@ -486,19 +482,15 @@ func TestMilestonesAbsenceAnniversary(t *testing.T) {
 		t.Fatalf("10th visit not announced: %v", e.h.said)
 	}
 
-	// Long absence and anniversary together.
+	// Anniversary and a long absence together: still ONE comment, the
+	// anniversary (higher priority). It is only marked announced once used.
 	e.advance(24 * time.Hour)
 	e.logoff(dave)
 	e.advance(400 * 24 * time.Hour)
 	e.h.reset()
 	e.login(dave)
-	got := e.said()
-	if !strings.Contains(got, "40") { // days since last visit (400-ish, "40x")
-		t.Fatalf("365+ day callout missing days: %v", e.h.said)
-	}
-	if !e.inPool("anniversary", e.b.vars(dave, "years", "1"), e.h.said[len(e.h.said)-1]) &&
-		!strings.Contains(got, "1 year") {
-		t.Fatalf("first anniversary not announced: %v", e.h.said)
+	if len(e.h.said) != 1 || !e.inPool("anniversary", e.b.vars(dave, "years", "1"), e.h.said[0]) {
+		t.Fatalf("want exactly one comment, the first anniversary: %v", e.h.said)
 	}
 	e.logoff(dave)
 	e.h.reset()
@@ -507,46 +499,78 @@ func TestMilestonesAbsenceAnniversary(t *testing.T) {
 	if strings.Contains(e.said(), "year(s)") {
 		t.Fatalf("anniversary repeated: %v", e.h.said)
 	}
+
+	// A long absence on its own is called out, with the number of days.
+	zed := keyed("z", "Zed")
+	e.login(zed)
+	e.logoff(zed)
+	e.advance(40 * 24 * time.Hour)
+	e.h.reset()
+	e.login(zed)
+	if len(e.h.said) != 1 || !e.inPool("absence_30", e.b.vars(zed, "days", "40"), e.h.said[0]) {
+		t.Fatalf("want one absence_30 comment naming 40 days: %v", e.h.said)
+	}
 }
 
 func TestTimeOfDayAndNodeRecord(t *testing.T) {
 	e := newEnv(t)
 	e.b.cfg.RemarkProbability = 1
-	e.clock = time.Date(2026, 10, 7, 2, 30, 0, 0, time.UTC) // 02:30 Wednesday
+	// A returning caller (not a first-timer) can get a time-of-day remark
+	// INSTEAD of the plain "welcome back".
+	e.clock = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
 	p := keyed("p", "Pat")
 	e.login(p)
-	found := false
-	for _, l := range e.h.said {
-		if e.inPool("remark_late", e.b.vars(p), l) {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("late-night remark missing: %v", e.h.said)
+	e.logoff(p)
+	e.clock = time.Date(2026, 10, 7, 2, 30, 0, 0, time.UTC) // 02:30 Wednesday
+	e.h.reset()
+	e.login(p)
+	if len(e.h.said) != 1 || !e.inPool("remark_late", e.b.vars(p), e.h.said[0]) {
+		t.Fatalf("want exactly one late-night remark: %v", e.h.said)
 	}
 
+	q := keyed("q", "Quin")
+	e.clock = time.Date(2026, 10, 8, 15, 0, 0, 0, time.UTC)
+	e.login(q)
+	e.logoff(q)
 	e.clock = time.Date(2026, 10, 10, 15, 0, 0, 0, time.UTC) // Saturday
 	e.h.reset()
-	q := keyed("q", "Quin")
 	e.login(q)
-	found = false
-	for _, l := range e.h.said {
-		if e.inPool("remark_weekend", e.b.vars(q), l) {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("weekend remark missing: %v", e.h.said)
+	if len(e.h.said) != 1 || !e.inPool("remark_weekend", e.b.vars(q), e.h.said[0]) {
+		t.Fatalf("want exactly one weekend remark: %v", e.h.said)
 	}
 
-	// Node record needs a previous record to beat.
+	// Node record needs a previous record to beat; it is the single comment.
 	e.b.cfg.RemarkProbability = 0
-	e.h.reset()
 	for i := 0; i < 3; i++ {
+		e.h.reset()
 		e.login(keyed(string(rune('r'+i)), "R"+string(rune('0'+i))))
+		if len(e.h.said) != 1 {
+			t.Fatalf("login %d: want exactly one comment, got %v", i, e.h.said)
+		}
 	}
-	if !strings.Contains(e.said(), "nodes") && !strings.Contains(e.said(), "users") && !strings.Contains(e.said(), "callers") {
-		t.Fatalf("no node-count record announced: %v", e.h.said)
+	if !e.inPool("node_record", e.b.vars(Person{}, "n", "5"), e.h.said[0]) && !strings.Contains(e.h.said[0], "5") {
+		t.Fatalf("no node-count record announced on the busiest login: %v", e.h.said)
+	}
+}
+
+// However many things are notable about a login, Gus says at most ONE
+// public thing about it.
+func TestAtMostOneCommentPerLogin(t *testing.T) {
+	e := newEnv(t)
+	e.b.cfg.RemarkProbability = 1
+	e.b.cfg.BusyGreetProbability = 1
+	e.b.st.set("calls", "99") // the next login is caller #100
+	people := []Person{keyed("a", "Alice"), keyed("b", "Bob"), anonP("c", "Cara"), keyed("d", "Dan")}
+	for round := 0; round < 40; round++ {
+		for _, p := range people {
+			e.h.reset()
+			e.login(p)
+			if len(e.h.said) > 1 {
+				t.Fatalf("round %d: %s's login got %d public comments: %v", round, p.Nick, len(e.h.said), e.h.said)
+			}
+			e.logoff(p)
+		}
+		e.advance(time.Duration(round%5+1) * 26 * time.Hour * time.Duration(1+round%3*50))
 	}
 }
 
