@@ -84,3 +84,14 @@ func (s *Store) LastSeenByNickname(ctx context.Context, nick string) (time.Time,
 	}
 	return time.Unix(at, 0), true, nil
 }
+
+// NicknameFor returns the nickname last stored for a key fingerprint, without
+// touching its last-seen time (unlike ResolveNickname).
+func (s *Store) NicknameFor(ctx context.Context, fp string) (string, bool, error) {
+	var nick string
+	err := s.db.QueryRowContext(ctx, `SELECT nickname FROM identities WHERE fingerprint = ?`, fp).Scan(&nick)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return nick, err == nil, err
+}

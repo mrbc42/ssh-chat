@@ -63,3 +63,33 @@ func (s *Store) SetOwner(ctx context.Context, channelID int64, fp string) error 
 	}
 	return tx.Commit()
 }
+
+// Operator is one row of a channel's staff list.
+type Operator struct {
+	FP        string
+	Role      string // RoleOwner or RoleOperator
+	GrantedAt time.Time
+}
+
+// ListOperators returns a channel's owner(s) first, then its operators, oldest
+// grant first within each.
+func (s *Store) ListOperators(ctx context.Context, channelID int64) ([]Operator, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT fp, role, granted_at FROM operators WHERE channel_id = ?
+		 ORDER BY CASE role WHEN ? THEN 0 ELSE 1 END, granted_at, fp`, channelID, RoleOwner)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Operator
+	for rows.Next() {
+		var o Operator
+		var at int64
+		if err := rows.Scan(&o.FP, &o.Role, &at); err != nil {
+			return nil, err
+		}
+		o.GrantedAt = time.Unix(at, 0)
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}

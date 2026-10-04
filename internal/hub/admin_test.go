@@ -765,3 +765,132 @@ func TestAdminRenameRoom(t *testing.T) {
 		t.Fatalf("renaming a permanent channel: %q", got)
 	}
 }
+
+// infoAll runs a command and returns all of its info lines joined.
+func infoAll(t *testing.T, h *Hub, s *Session, cmd string) string {
+	t.Helper()
+	drain(s)
+	HandleInput(context.Background(), h, s, cmd)
+	var b strings.Builder
+	for {
+		select {
+		case o := <-s.Outbox:
+			if o.Line != nil && (o.Line.Kind == KindInfo || o.Line.Kind == KindError) {
+				b.WriteString(o.Line.Body + "\n")
+			}
+		case <-time.After(400 * time.Millisecond):
+			return b.String()
+		}
+	}
+}
+
+func TestOwnerCommandShowsStaffForEachChannel(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	owner := NewSession("SHA256:owner", "1.1.1.1", "alice")
+	op := NewSession("SHA256:op", "2.2.2.2", "bob")
+	plain := NewSession("SHA256:plain", "3.3.3.3", "carol")
+	keyless := NewSession("anon-9999", "4.4.4.4", "ghost")
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	for _, s := range []*Session{owner, op, plain, keyless, admin} {
+		h.Main().Join(s)
+	}
+	_ = st.SetNickname(ctx, "SHA256:owner", "alice")
+	_ = st.SetNickname(ctx, "SHA256:op", "bob")
+	_ = st.SetNickname(ctx, "SHA256:gone", "dave")
+	time.Sleep(150 * time.Millisecond)
+	_ = info(t, h, owner, "/create lounge")
+	time.Sleep(200 * time.Millisecond)
+	for _, s := range []*Session{op, plain, keyless} {
+		_ = info(t, h, s, "/join lounge")
+	}
+	time.Sleep(300 * time.Millisecond)
+	_ = info(t, h, owner, "/op bob")
+	ch, _, _ := st.GetChannelByName(ctx, "lounge")
+	_ = st.SetOperator(ctx, ch.ID, "SHA256:gone", store.RoleOperator) // an operator who is offline
+	time.Sleep(200 * time.Millisecond)
+
+	// Inside the channel: owner, online and offline operators.
+	got := infoAll(t, h, plain, "/owner")
+	for _, want := range []string{"Staff of #lounge:", "Owner:      alice (online)", "bob (online)", "dave (offline)", "You are not staff in this channel."} {
+		if !strings.Contains(got, want) {
+			t.Errorf("/owner in #lounge is missing %q:\n%s", want, got)
+		}
+	}
+	// Aliases work.
+	if a := infoAll(t, h, plain, "/staff"); !strings.Contains(a, "Staff of #lounge:") {
+		t.Errorf("/staff alias: %s", a)
+	}
+	// The caller's own role is spelled out.
+	if got := infoAll(t, h, owner, "/owner"); !strings.Contains(got, "You are the owner of this channel") {
+		t.Errorf("owner should be told so:\n%s", got)
+	}
+	if got := infoAll(t, h, op, "/owner"); !strings.Contains(got, "You are an operator of this channel") {
+		t.Errorf("operator should be told so:\n%s", got)
+	}
+	// A keyless user is told why they can't hold ownership.
+	if got := infoAll(t, h, keyless, "/owner"); !strings.Contains(got, "without an SSH key") {
+		t.Errorf("keyless caller should get the SSH key hint:\n%s", got)
+	}
+
+	// From #main, naming another channel works; unknown channels are reported.
+	if got := infoAll(t, h, plain, "/owner #lounge"); !strings.Contains(got, "Staff of #lounge:") {
+		t.Errorf("/owner #lounge from #main:\n%s", got)
+	}
+	if got := infoAll(t, h, plain, "/owner nowhere"); !strings.Contains(got, "No such channel #nowhere") {
+		t.Errorf("unknown channel:\n%s", got)
+	}
+
+	// #main: no owner; the administrators run it, and the online ones are listed.
+	got = infoAll(t, h, plain, "/owner main")
+	if !strings.Contains(got, "#main has no channel owner") || !strings.Contains(got, "Administrators online now: boss") {
+		t.Errorf("/owner for #main:\n%s", got)
+	}
+	if got := infoAll(t, h, admin, "/owner"); !strings.Contains(got, "Staff of #main:") { // the admin is still in #main
+		t.Errorf("/owner with no argument in #main should describe #main:\n%s", got)
+	}
+
+	// An owner who had no SSH key: their ownership is gone once they disconnect.
+	_ = info(t, h, keyless, "/create keyless-room")
+	time.Sleep(200 * time.Millisecond)
+	keyless.MarkClosed()
+	h.Main().Send(evPart{sess: keyless})
+	if kr, ok := h.GetLoadedRoom("keyless-room"); ok {
+		kr.PartDisconnect(keyless)
+	}
+	time.Sleep(200 * time.Millisecond)
+	got = infoAll(t, h, plain, "/owner keyless-room")
+	if !strings.Contains(got, "a user who had no SSH key (gone") {
+		t.Errorf("a vanished keyless owner should be explained:\n%s", got)
+	}
+	// ...and an admin is told how to fix it.
+	if got := infoAll(t, h, admin, "/owner keyless-room"); !strings.Contains(got, "/takeover") {
+		t.Errorf("admins should be pointed at /takeover:\n%s", got)
+	}
+
+	// Everyone sees /owner in /help, in #main and in channels.
+	if got := helpText(t, h, plain); !strings.Contains(got, "/owner") {
+		t.Errorf("/help should list /owner:\n%s", got)
+	}
+}
+
+func TestOwnerCommandOnAPermanentChannel(t *testing.T) {
+	h, _ := adminHub(t)
+	ctx := context.Background()
+	if err := h.EnsurePermanent(ctx, []string{"help"}); err != nil {
+		t.Fatal(err)
+	}
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	plain := NewSession("SHA256:plain", "3.3.3.3", "carol")
+	h.Main().Join(admin)
+	h.Main().Join(plain)
+	got := infoAll(t, h, plain, "/owner help")
+	if !strings.Contains(got, "nobody (a permanent channel has no human owner)") ||
+		!strings.Contains(got, "permanent channel: server administrators can moderate it too") ||
+		!strings.Contains(got, "Administrators online now: boss") {
+		t.Fatalf("permanent channel staff:\n%s", got)
+	}
+	if got := infoAll(t, h, admin, "/owner help"); !strings.Contains(got, "owner rights in this permanent channel") {
+		t.Fatalf("admin on a permanent channel:\n%s", got)
+	}
+}

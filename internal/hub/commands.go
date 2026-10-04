@@ -119,6 +119,10 @@ func init() {
 		OwnerOnly: true, Fn: cmdDeop,
 	})
 	register(&Command{
+		Name: "owner", Aliases: []string{"owners", "staff"}, Usage: "/owner [#channel]", Help: "Show who owns and moderates a channel (default: this one, #main included).",
+		Fn: cmdOwner,
+	})
+	register(&Command{
 		Name: "lock", Usage: "/lock", Help: "Lock the current channel (blocks new joins; still listed).",
 		NeedsOp: true, Fn: cmdLock,
 	})
