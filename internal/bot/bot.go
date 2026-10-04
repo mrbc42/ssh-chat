@@ -20,15 +20,16 @@ type Person struct {
 
 // Host is everything the bot needs from the chat server.
 type Host interface {
-	Say(text string)                 // one line of public chat in #main
-	SayIn(room, text string)         // one line of public chat in another channel
-	Action(text string)              // an emote in #main
-	PM(nick, text string)            // a private message
-	Online() []Person                // every connected human, server-wide (bot excluded)
-	OnlineCount() int                // len(Online()) without building the list; may be up to a second stale
-	IsAdmin(fp string) bool          // is this server-verified key fingerprint a server administrator?
-	TryPM(nick, text string) bool    // like PM, but reports whether it was actually delivered (false if the user is gone or ignoring the bot)
-	ShowMotd(nick, text string) bool // show the message of the day, as a boxed block, to one user
+	Say(text string)                            // one line of public chat in #main
+	SayIn(room, text string)                    // one line of public chat in another channel
+	Action(text string)                         // an emote in #main
+	PM(nick, text string)                       // a private message
+	Online() []Person                           // every connected human, server-wide (bot excluded)
+	OnlineCount() int                           // len(Online()) without building the list; may be up to a second stale
+	IsAdmin(fp string) bool                     // is this server-verified key fingerprint a server administrator?
+	TryPM(nick, text string) bool               // like PM, but reports whether it was actually delivered (false if the user is gone or ignoring the bot)
+	ShowMotd(nick, text string) bool            // show the message of the day, as a boxed block, to one user
+	ShowLines(nick string, lines []string) bool // show private informational lines (a guide) to one user
 }
 
 type EventKind int
@@ -48,10 +49,11 @@ type Event struct {
 }
 
 type outLine struct {
-	tellID int64  // >0: a stored !tell; deleted only once TryPM confirms delivery
-	motd   bool   // pmTo is shown the message of the day (text) as a boxed block
-	room   string // public lines: the channel to speak in ("" = #main)
-	pmTo   string // "" = public
+	tellID int64    // >0: a stored !tell; deleted only once TryPM confirms delivery
+	motd   bool     // pmTo is shown the message of the day (text) as a boxed block
+	guide  []string // non-empty: these private info lines go to pmTo (counted as one line for rate limits)
+	room   string   // public lines: the channel to speak in ("" = #main)
+	pmTo   string   // "" = public
 	text   string
 	kind   int
 }
@@ -76,6 +78,8 @@ type Bot struct {
 	userWarned    map[string]time.Time
 	globalWin     []time.Time
 	unmatchedPath string
+	publicHost    string
+	publicPort    string
 
 	startedAt    time.Time
 	lastActivity time.Time
@@ -91,6 +95,8 @@ type Options struct {
 	DBPath        string
 	UnmatchedPath string
 	DataDir       string // optional override directory for data files
+	PublicHost    string // address users connect to, shown in the !ssh guide examples ("" = a placeholder)
+	PublicPort    string // port users connect to ("" = 2222)
 	Now           func() time.Time
 	Sleep         func(time.Duration)
 	Seed          [2]uint64
@@ -120,6 +126,8 @@ func New(host Host, o Options) (*Bot, error) {
 		inflight: map[int64]bool{},
 		userWin:  map[string][]time.Time{}, userWarned: map[string]time.Time{},
 		unmatchedPath: o.UnmatchedPath,
+		publicHost:    strings.TrimSpace(o.PublicHost),
+		publicPort:    strings.TrimSpace(o.PublicPort),
 	}
 	if b.now == nil {
 		b.now = time.Now
@@ -237,6 +245,10 @@ func (b *Bot) emit(batch []outLine) {
 	b.globalWin = kept
 	lines := 0 // count real chat messages, after any splitting of over-long text
 	for _, l := range batch {
+		if len(l.guide) > 0 {
+			lines++ // a private guide to one user is one reply, however long
+			continue
+		}
 		lines += len(chunk(l.text, b.cfg.MaxMessageChars))
 	}
 	if len(b.globalWin)+lines > b.cfg.RateGlobalPerMin {
@@ -298,6 +310,10 @@ func (b *Bot) deliver(batch []outLine) {
 		b.sleep(time.Duration(d) * time.Millisecond)
 	}
 	for _, l := range batch {
+		if len(l.guide) > 0 {
+			b.host.ShowLines(l.pmTo, l.guide)
+			continue
+		}
 		for _, line := range chunk(l.text, b.cfg.MaxMessageChars) {
 			if strings.HasPrefix(line, "/") {
 				line = "." + line // never let echoed text become a server command
@@ -388,6 +404,9 @@ func validatePools(c *Content) error {
 		if len(c.Pools[name]) == 0 {
 			return fmt.Errorf("persona.json: missing or empty pool %q", name)
 		}
+	}
+	if len(c.SSHHelp) < 10 {
+		return fmt.Errorf("persona.json: ssh_help (the !ssh guide) is missing or too short")
 	}
 	if len(c.Trivia) == 0 || len(c.Fortunes) == 0 || len(c.Oneliners) == 0 || len(c.History) == 0 || len(c.Quotes) == 0 {
 		return fmt.Errorf("trivia, fortunes, oneliners, history and quotes must not be empty")

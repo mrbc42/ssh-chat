@@ -23,11 +23,11 @@
    "(lose|lost|forgot).*(name|nick)"
   ],
   "replies": [
-   "Your identity is your SSH key. Same key, same name, every time. Keyless callers get a fresh random identity.",
-   "If your key has a passphrase, run ssh-add first. Otherwise you may connect keyless without noticing.",
-   "No key means no memory. I only keep files on people who use an SSH key.",
-   "Use the same SSH key each time and I'll remember you. Without one you're a stranger every call.",
-   "Name keeps changing? You're probably connecting without your key. Check ssh-add."
+   "Your identity is your SSH key. Same key, same name, every time. Keyless callers get a fresh random identity. Type !ssh for the full guide.",
+   "If your key has a passphrase, run ssh-add first. Otherwise you may connect keyless without noticing. Type !ssh for the full guide.",
+   "No key means no memory. I only keep files on people who use an SSH key. Type !ssh for the full guide.",
+   "Use the same SSH key each time and I'll remember you. Without one you're a stranger every call. Type !ssh for the full guide.",
+   "Name keeps changing? You're probably connecting without your key. Check ssh-add. Type !ssh for the full guide."
   ]
  },
  {

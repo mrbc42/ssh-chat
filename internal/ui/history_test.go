@@ -558,3 +558,37 @@ func TestRoomInfoOutboundRefreshesTheStatusBar(t *testing.T) {
 		t.Fatal("a status refresh must not touch the scrollback")
 	}
 }
+
+// Aligned columns and indentation (as in /help, /gus, /keys and the SSH guide)
+// must survive: only text that has to be wrapped is re-flowed.
+func TestWrapKeepsSpacingWhenTheLineFits(t *testing.T) {
+	for _, line := range []string{
+		"  /help                  Show this help message.",
+		"    ssh-keygen -t ed25519",
+		"a  b   c",
+	} {
+		if got := wrapPlain(line, 80); len(got) != 1 || got[0] != line {
+			t.Errorf("%q must be returned unchanged, got %q", line, got)
+		}
+	}
+	if got := wrapPlain("   ", 80); len(got) != 0 {
+		t.Errorf("a blank line has no rows: %q", got)
+	}
+
+	// A line that must wrap keeps its indentation on every row, and loses no words.
+	long := "    ssh -i ~/.ssh/my_special_key_file -p 2222 chat.example.com --verbose --something-else"
+	rows := wrapPlain(long, 40)
+	if len(rows) < 2 {
+		t.Fatalf("expected a wrapped line: %q", rows)
+	}
+	var words []string
+	for _, r := range rows {
+		if !strings.HasPrefix(r, "    ") || lipgloss.Width(r) > 40 {
+			t.Errorf("row must keep the 4-space indent and fit: %q", r)
+		}
+		words = append(words, strings.Fields(r)...)
+	}
+	if strings.Join(words, " ") != strings.Join(strings.Fields(long), " ") {
+		t.Errorf("wrapping lost or changed words: %q", words)
+	}
+}

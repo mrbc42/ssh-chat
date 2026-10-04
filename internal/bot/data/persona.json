@@ -64,12 +64,12 @@
    "{nick} bounced off the line and right back on. Call waiting strikes again."
   ],
   "greet_anon": [
-   "{nick}, no key, no memory. I won't remember you tomorrow. Use the same SSH key every time.",
-   "Keyless caller. Fine, {nick}, but I'll forget you the second you hang up.",
-   "Welcome, stranger. Without an SSH key I can't keep a file on you. Your loss.",
-   "{nick}, you came in anonymous. Nothing wrong with that, but nothing gets saved either.",
-   "No key detected, {nick}. If it has a passphrase, run ssh-add first.",
-   "Anonymous user {nick}. I don't do names without keys. Welcome anyway."
+   "{nick}, no key, no memory. I won't remember you tomorrow. Use the same SSH key every time. Type !ssh to see how.",
+   "Keyless caller. Fine, {nick}, but I'll forget you the second you hang up. Type !ssh for the way out.",
+   "Welcome, stranger. Without an SSH key I can't keep a file on you. Your loss. Type !ssh if you'd like to fix that.",
+   "{nick}, you came in anonymous. Nothing wrong with that, but nothing gets saved either. Type !ssh to change that.",
+   "No key detected, {nick}. Type !ssh for a step-by-step guide to keeping your name.",
+   "Anonymous user {nick}. I don't do names without keys. Type !ssh and I'll show you how to get one."
   ],
   "absence_30": [
    "{nick}, {days} days. A month. Where have you been, a better board?",
@@ -482,5 +482,38 @@
    "Give me words: !motd set <message>.",
    "Try: !motd set <message> or !motd clear."
   ]
- }
+ },
+ "ssh_help": [
+  "HOW TO KEEP YOUR NAME: a step-by-step guide to SSH keys",
+  "WHY: this server knows you by an SSH key, a pair of small files on your own computer that work like a signature. Connect with the same key every time and you keep your name, your !tell mail and your trivia score. Without a key you get a new random name on every visit and nothing is remembered. It takes about a minute, and you never sign up or send anything to anyone.",
+  "STEP 1. Open a terminal (a window where you type commands):",
+  "  Windows 10/11: press the Start button, type PowerShell, press Enter.",
+  "  Mac: press Command+Space, type Terminal, press Enter.",
+  "  Linux: press Ctrl+Alt+T, or find Terminal in your apps.",
+  "STEP 2. Make your key. Type this exactly, then press Enter:",
+  "  ssh-keygen -t ed25519",
+  "It asks where to save the key: just press Enter. Then it asks for a passphrase twice: pressing Enter both times (no passphrase) is the simplest. A passphrase is safer on a shared computer, but you must then unlock the key each time (see the notes below).",
+  "If it says the file already exists, you already HAVE a key: type n, press Enter, and carry on to step 3.",
+  "It made two files in a folder called .ssh inside your home folder (on Windows: C:\\Users\\YourName\\.ssh). id_ed25519 is your PRIVATE key: never send it to anyone. id_ed25519.pub is the public half, which is safe to share (this server never asks for it).",
+  "STEP 3. Connect. SSH uses your key automatically:",
+  "  ssh -p {port} {host}",
+  "The very first time, SSH asks 'Are you sure you want to continue connecting?': type yes and press Enter.",
+  "STEP 4. Choose your name, once. Inside the chat type:",
+  "  /nick YourName",
+  "It is saved against your key, so you get it back every time you connect.",
+  "CHECK IT WORKED: you will NOT see the blue 'No SSH key detected' line when you connect. If you still see it, SSH is not using your key: see the notes below.",
+  "NOTES",
+  "- Always connect with the same key. To use another computer, copy your private key file (id_ed25519) into that computer's .ssh folder, or make a new key there and start with a new name.",
+  "- A lost private key cannot be recovered: you would start again with a new name. Keep a private backup copy.",
+  "- If you chose a passphrase, SSH asks for it every time. To unlock the key once per session type ssh-add first (on Windows you may need to start the 'OpenSSH Authentication Agent' service).",
+  "- To use a key stored somewhere else: ssh -i path/to/your_key -p {port} {host}",
+  "- Tired of typing the address? Put these lines in a file called config inside your .ssh folder, then just type ssh chat :",
+  "  Host chat",
+  "    HostName {host}",
+  "    Port {port}",
+  "    IdentityFile ~/.ssh/id_ed25519",
+  "- Phone or tablet: SSH apps have a 'generate key' button in their settings. Use it, then connect to {host} on port {port}.",
+  "- A terminal with a black background looks best here.",
+  "Stuck? Ask in the chat, someone will help. Type !ssh any time to see this again."
+ ]
 }

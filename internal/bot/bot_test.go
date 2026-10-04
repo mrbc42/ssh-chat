@@ -12,6 +12,7 @@ import (
 type pmMsg struct{ to, text string }
 
 type fakeHost struct {
+	guides   map[string][]string // private guide lines shown to a user (key = nick)
 	motds    []pmMsg             // boxed MOTD blocks shown to a user (to = nick)
 	ignoring map[string]bool     // nicks that are ignoring the bot (their private messages are not delivered)
 	admins   map[string]bool     // fingerprints the server treats as administrators
@@ -22,13 +23,17 @@ type fakeHost struct {
 	online   []Person
 }
 
-func (f *fakeHost) Say(t string)              { f.said = append(f.said, t) }
-func (f *fakeHost) SayIn(room, t string)      { f.sayIn[room] = append(f.sayIn[room], t) }
-func (f *fakeHost) Action(t string)           { f.actions = append(f.actions, t) }
-func (f *fakeHost) PM(n, t string)            { f.pms = append(f.pms, pmMsg{n, t}) }
-func (f *fakeHost) Online() []Person          { return f.online }
-func (f *fakeHost) OnlineCount() int          { return len(f.online) }
-func (f *fakeHost) IsAdmin(fp string) bool    { return f.admins[fp] }
+func (f *fakeHost) Say(t string)           { f.said = append(f.said, t) }
+func (f *fakeHost) SayIn(room, t string)   { f.sayIn[room] = append(f.sayIn[room], t) }
+func (f *fakeHost) Action(t string)        { f.actions = append(f.actions, t) }
+func (f *fakeHost) PM(n, t string)         { f.pms = append(f.pms, pmMsg{n, t}) }
+func (f *fakeHost) Online() []Person       { return f.online }
+func (f *fakeHost) OnlineCount() int       { return len(f.online) }
+func (f *fakeHost) IsAdmin(fp string) bool { return f.admins[fp] }
+func (f *fakeHost) ShowLines(n string, lines []string) bool {
+	f.guides[n] = append(f.guides[n], lines...)
+	return true
+}
 func (f *fakeHost) ShowMotd(n, t string) bool { f.motds = append(f.motds, pmMsg{n, t}); return true }
 func (f *fakeHost) TryPM(n, t string) bool {
 	if f.ignoring[n] {
@@ -39,6 +44,7 @@ func (f *fakeHost) TryPM(n, t string) bool {
 }
 func (f *fakeHost) reset() {
 	f.said, f.pms, f.actions, f.motds = nil, nil, nil, nil
+	f.guides = map[string][]string{}
 	f.sayIn = map[string][]string{}
 }
 func (f *fakeHost) joined(p Person) { f.online = append(f.online, p) }
@@ -61,7 +67,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	e := &env{t: t, h: &fakeHost{sayIn: map[string][]string{}, admins: map[string]bool{}, ignoring: map[string]bool{}}, clock: time.Date(2026, 10, 7, 14, 0, 0, 0, time.UTC)} // a Wednesday afternoon
+	e := &env{t: t, h: &fakeHost{sayIn: map[string][]string{}, admins: map[string]bool{}, ignoring: map[string]bool{}, guides: map[string][]string{}}, clock: time.Date(2026, 10, 7, 14, 0, 0, 0, time.UTC)} // a Wednesday afternoon
 	e.dbPath = filepath.Join(t.TempDir(), "bot.db")
 	b, err := New(e.h, Options{
 		DBPath:        e.dbPath,
@@ -1242,5 +1248,99 @@ func TestTellIsKeptUntilItIsReallyDelivered(t *testing.T) {
 	e.login(bob)
 	if delivered() {
 		t.Fatal("delivered mail came back")
+	}
+}
+
+func TestSshGuideIsPrivateCompleteAndUsesTheRealAddress(t *testing.T) {
+	e := newEnv(t)
+	alice := keyed("a", "Alice")
+	ghost := anonP("g", "Ghost")
+	e.login(alice)
+	e.login(ghost)
+	e.chat(alice, "x")
+	e.chat(ghost, "x")
+
+	// Without a configured address the examples use a placeholder and say so.
+	e.advance(time.Minute)
+	e.h.reset()
+	e.chat(ghost, "!ssh") // the people who most need it are the keyless ones
+	guide := strings.Join(e.h.guides["Ghost"], "\n")
+	if len(e.h.said) != 0 || len(e.h.pms) != 0 || guide == "" {
+		t.Fatalf("the guide goes privately, as plain lines, to the asker only: said=%v pms=%v", e.h.said, e.h.pms)
+	}
+	if len(e.h.guides["Alice"]) != 0 {
+		t.Fatal("someone else received the guide")
+	}
+	for _, must := range []string{
+		"ssh-keygen -t ed25519", "id_ed25519.pub", "PRIVATE key", "/nick YourName", "ssh-add",
+		"Are you sure you want to continue connecting", "No SSH key detected", "PowerShell", "Terminal", ".ssh",
+		"ssh -p 2222 <server-address>", "use the address you normally connect to",
+	} {
+		if !strings.Contains(guide, must) {
+			t.Errorf("the guide should contain %q", must)
+		}
+	}
+	if strings.ContainsAny(guide, "{}") {
+		t.Errorf("an unfilled placeholder is left in the guide:\n%s", guide)
+	}
+	for _, l := range e.h.guides["Ghost"] {
+		if strings.TrimSpace(l) == "" || len(l) > 500 {
+			t.Errorf("each line must be non-empty and reasonably short: %q", l)
+		}
+	}
+
+	// With the server's real address configured the examples are copy-pasteable.
+	e.b.publicHost, e.b.publicPort = "chat.example.com", "2200"
+	e.advance(time.Minute)
+	e.h.reset()
+	e.chat(alice, "!ssh")
+	guide = strings.Join(e.h.guides["Alice"], "\n")
+	for _, must := range []string{"ssh -p 2200 chat.example.com", "HostName chat.example.com", "Port 2200"} {
+		if !strings.Contains(guide, must) {
+			t.Errorf("with a configured address the guide should contain %q", must)
+		}
+	}
+	if strings.Contains(guide, "<server-address>") || strings.Contains(guide, "normally connect to") {
+		t.Error("the placeholder note must disappear once the address is configured")
+	}
+
+	// It works in other channels too, and is listed in the bot's help.
+	e.advance(time.Minute)
+	e.h.reset()
+	e.chatIn("lounge", ghost, "!ssh")
+	if len(e.h.guides["Ghost"]) == 0 {
+		t.Fatal("!ssh should work in every channel")
+	}
+	found := false
+	for _, c := range commandHelp {
+		found = found || c.name == "ssh"
+	}
+	if !found {
+		t.Fatal("!ssh must be listed in /gus and !help")
+	}
+}
+
+// Every keyless nudge points at the guide.
+func TestKeylessMessagesPointAtTheSshGuide(t *testing.T) {
+	_, c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range c.Pools["greet_anon"] {
+		if !strings.Contains(v.Text, "!ssh") {
+			t.Errorf("greet_anon variant does not mention !ssh: %q", v.Text)
+		}
+	}
+	for _, e := range c.FAQ {
+		for _, p := range e.Patterns {
+			if strings.Contains(p, "key") {
+				for _, r := range e.Replies {
+					if !strings.Contains(r.Text, "!ssh") {
+						t.Errorf("a key FAQ answer does not mention !ssh: %q", r.Text)
+					}
+				}
+				break
+			}
+		}
 	}
 }

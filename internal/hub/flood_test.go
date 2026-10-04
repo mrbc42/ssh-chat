@@ -429,3 +429,44 @@ func TestShowMotdGoesToOneUserEvenIfTheyIgnoreTheBot(t *testing.T) {
 		}
 	}
 }
+
+func TestShowLinesGoesToOneUserAsPlainInfoLines(t *testing.T) {
+	h, _ := adminHub(t)
+	a := NewSession("SHA256:a", "1.1.1.1", "alice")
+	b := NewSession("SHA256:b", "2.2.2.2", "bob")
+	h.Main().Join(a)
+	h.Main().Join(b)
+	time.Sleep(100 * time.Millisecond)
+	a.Ignore("SysOp-Gus") // server information still reaches a user who ignores the bot
+	drain(a)
+	drain(b)
+	if !h.ShowLines("alice", []string{"step one", "  ssh-keygen -t ed25519", "step three"}) {
+		t.Fatal("ShowLines to an online user should report delivered")
+	}
+	if h.ShowLines("nobody", []string{"x"}) {
+		t.Fatal("ShowLines to an offline user must report not delivered")
+	}
+	var got []string
+	for _, l := range collectLines(a) {
+		if l.Kind == KindInfo {
+			got = append(got, l.Body)
+		}
+	}
+	if len(got) != 3 || got[1] != "  ssh-keygen -t ed25519" {
+		t.Fatalf("alice should get the three lines in order, indentation intact: %q", got)
+	}
+	if n := len(collectLines(b)); n != 0 {
+		t.Fatalf("bob must receive nothing, got %d lines", n)
+	}
+}
+
+func TestBotRunningFollowsTheBotHelp(t *testing.T) {
+	h, _ := adminHub(t)
+	if h.BotRunning() {
+		t.Fatal("no bot is configured")
+	}
+	h.SetBotHelp([]string{"x"})
+	if !h.BotRunning() {
+		t.Fatal("a configured bot should count as running")
+	}
+}

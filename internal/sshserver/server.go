@@ -144,7 +144,7 @@ func teaHandler(st *store.Store, h *hub.Hub) bm.Handler {
 
 		if sess.PublicKey() == nil {
 			chatSess.SetJoinNotice("No SSH key detected: your name and identity will NOT persist; you get a new random one each connection. " +
-				"Connect with the same key every time (if it has a passphrase, run ssh-add first).")
+				"Connect with the same key every time (if it has a passphrase, run ssh-add first)." + keyGuideHint(h))
 		}
 		// Join #main before the bubbletea program starts, so the session's
 		// Outbox already has the SwitchRoom+scrollback queued when the UI's

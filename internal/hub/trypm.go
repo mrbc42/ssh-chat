@@ -36,3 +36,23 @@ func (h *Hub) ShowMotd(nick, text string) bool {
 	line := Line{Time: time.Now(), Kind: KindMotd, Body: text}
 	return to.send(Outbound{Line: &line})
 }
+
+// ShowLines sends private informational lines (a guide, say) to the user
+// currently named nick, as plain info lines with no "private message" label.
+// Like the MOTD it is server information and is shown even to a user who is
+// ignoring the bot. Reports whether every line was queued.
+func (h *Hub) ShowLines(nick string, lines []string) bool {
+	to := h.FindSessionByNick(nick)
+	if to == nil {
+		return false
+	}
+	ok := true
+	for _, text := range lines {
+		l := infoLine(text)
+		ok = to.send(Outbound{Line: &l}) && ok
+	}
+	return ok
+}
+
+// BotRunning reports whether a chat bot is active (so its !commands exist).
+func (h *Hub) BotRunning() bool { return len(h.botHelp) > 0 }

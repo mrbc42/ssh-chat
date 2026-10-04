@@ -667,41 +667,56 @@ func textWidth(s string) int {
 }
 
 // wrapPlain word-wraps plain text to width columns, hard-splitting any word
-// longer than a row.
+// longer than a row. Text that already fits is returned untouched, so aligned
+// columns and runs of spaces (as in /help) survive; only a line that has to be
+// wrapped is re-flowed word by word, and then every row keeps the line's
+// leading indentation.
 func wrapPlain(s string, width int) []string {
 	if width < 1 {
 		width = 1
 	}
+	if textWidth(s) <= width {
+		if strings.TrimSpace(s) == "" {
+			return nil
+		}
+		return []string{s}
+	}
+	lead := len(s) - len(strings.TrimLeft(s, " "))
+	if lead > width/2 {
+		lead = 0
+	}
+	indent := strings.Repeat(" ", lead)
+	avail := width - lead
 	var rows []string
 	cur, curW := "", 0
 	for _, w := range strings.Fields(s) {
 		ww := textWidth(w)
-		for ww > width {
+		for ww > avail {
 			if cur != "" {
-				rows, cur, curW = append(rows, cur), "", 0
+				rows, cur, curW = append(rows, indent+cur), "", 0
 			}
 			r := []rune(w)
 			n := 0
-			for n < len(r) && textWidth(string(r[:n+1])) <= width {
+			for n < len(r) && textWidth(string(r[:n+1])) <= avail {
 				n++
 			}
 			if n == 0 {
 				n = 1
 			}
-			rows, w = append(rows, string(r[:n])), string(r[n:])
+			rows, w = append(rows, indent+string(r[:n])), string(r[n:])
 			ww = textWidth(w)
 		}
 		switch {
 		case cur == "":
 			cur, curW = w, ww
-		case curW+1+ww <= width:
+		case curW+1+ww <= avail:
 			cur, curW = cur+" "+w, curW+1+ww
 		default:
-			rows, cur, curW = append(rows, cur), w, ww
+			rows, cur, curW = append(rows, indent+cur), w, ww
 		}
 	}
 	if cur != "" {
-		rows = append(rows, cur)
+		rows = append(rows, indent+cur)
 	}
 	return rows
 }

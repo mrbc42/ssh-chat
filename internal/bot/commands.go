@@ -70,7 +70,7 @@ func (b *Bot) handlers() map[string]func(Person, string) {
 		"help": b.cmdHelp, "time": b.cmdTime, "who": b.cmdWho, "seen": b.cmdSeen,
 		"tell": b.cmdTell, "stats": b.cmdStats, "rules": b.cmdRules, "motd": b.cmdMotd,
 		"roll": b.cmdRoll, "fortune": b.cmdFortune, "quote": b.cmdQuote, "trivia": b.cmdTrivia,
-		"forget": b.cmdForget, "remember": b.cmdRemember,
+		"forget": b.cmdForget, "remember": b.cmdRemember, "ssh": b.cmdSSH,
 	}
 }
 
@@ -92,6 +92,7 @@ var commandHelp = []struct{ name, usage, help string }{
 	{"trivia", "!trivia [answer|top]", "Ask a trivia question, answer it, or show the leaderboard."},
 	{"forget", "!forget", "Erase everything I know about you and stop tracking you."},
 	{"remember", "!remember", "Start tracking you again after !forget."},
+	{"ssh", "!ssh", "Step-by-step guide to making an SSH key so you keep your name."},
 }
 
 // HelpLines is the section the server's /help shows for the bot's commands.
@@ -314,4 +315,32 @@ func (b *Bot) cmdRemember(p Person, _ string) {
 		b.st.remember(p.FP)
 	}
 	b.say(kindPlain, b.text("remember_done", b.vars(p)))
+}
+
+// cmdSSH shows the SSH-key guide to the person who asked, privately and as
+// plain lines, with this server's address and port filled into the examples.
+func (b *Bot) cmdSSH(p Person, _ string) {
+	b.emit([]outLine{{pmTo: p.Nick, guide: b.sshGuide()}})
+}
+
+// sshGuide is the guide text with {host} and {port} filled in. Without a
+// configured address the examples say <server-address>, and the guide then
+// tells the reader to use the address they already connect with.
+func (b *Bot) sshGuide() []string {
+	host, port := b.publicHost, b.publicPort
+	if port == "" {
+		port = "2222"
+	}
+	vars := map[string]string{"host": host, "port": port}
+	if host == "" {
+		vars["host"] = "<server-address>"
+	}
+	lines := make([]string, 0, len(b.c.SSHHelp)+1)
+	for _, l := range b.c.SSHHelp {
+		lines = append(lines, fill(l, vars))
+	}
+	if host == "" {
+		lines = append(lines, "(Where it says <server-address>, use the address you normally connect to this server with.)")
+	}
+	return lines
 }

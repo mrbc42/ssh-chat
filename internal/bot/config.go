@@ -111,6 +111,7 @@ type Content struct {
 	Oneliners []string
 	History   []HistoryItem
 	Quotes    []Quote
+	SSHHelp   []string // lines of the !ssh guide; {host} and {port} are filled in
 }
 
 func defaultConfig() Config {
@@ -180,14 +181,15 @@ func Load(dir string) (Config, *Content, error) {
 
 	c := &Content{}
 	var persona struct {
-		Motd  string          `json:"motd"`
-		Rules []string        `json:"rules"`
-		Pools map[string]Pool `json:"pools"`
+		Motd    string          `json:"motd"`
+		Rules   []string        `json:"rules"`
+		Pools   map[string]Pool `json:"pools"`
+		SSHHelp []string        `json:"ssh_help"`
 	}
 	if err := loadJSON(dir, "persona.json", &persona); err != nil {
 		return cfg, nil, err
 	}
-	c.Motd, c.Rules, c.Pools = persona.Motd, persona.Rules, persona.Pools
+	c.Motd, c.Rules, c.Pools, c.SSHHelp = persona.Motd, persona.Rules, persona.Pools, persona.SSHHelp
 	for _, f := range []struct {
 		name string
 		into any

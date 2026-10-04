@@ -49,6 +49,8 @@ func main() {
 	flag.IntVar(&sshserver.MaxConnsPerIP, "max-conns-per-ip", sshserver.MaxConnsPerIP, "max concurrent connections from one IP")
 	flag.IntVar(&sshserver.MaxConnsPerMinute, "max-conns-per-min", sshserver.MaxConnsPerMinute, "max new connections per minute from one IP")
 	adminFPsFlag := flag.String("admin-fps", "", "comma-separated admin SSH key fingerprints (SHA256:...), in addition to the -admins file")
+	publicHost := flag.String("public-host", "", "address users connect to, shown in the !ssh guide's example commands (default: a placeholder)")
+	publicPort := flag.String("public-port", "2222", "port users connect to, shown in the !ssh guide's example commands")
 	bannerText := flag.String("banner-text", "", "text of the coloured banner at the top of the chat window (default \""+ui.DefaultBannerText+"\")")
 	bannerBG := flag.String("banner-bg", "", "banner background colour, hex like #5f00af (default "+ui.DefaultBannerBG+")")
 	bannerFG := flag.String("banner-fg", "", "banner text colour, hex like #ffd700 (default "+ui.DefaultBannerFG+")")
@@ -128,6 +130,8 @@ func main() {
 			DBPath:        botPath,
 			UnmatchedPath: filepath.Join(filepath.Dir(botPath), "unmatched.log"),
 			DataDir:       *botData,
+			PublicHost:    *publicHost,
+			PublicPort:    *publicPort,
 		})
 		if err != nil {
 			log.Fatalf("starting bot: %v", err)
