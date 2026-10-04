@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,13 +20,14 @@ type Person struct {
 
 // Host is everything the bot needs from the chat server.
 type Host interface {
-	Say(text string)         // one line of public chat in #main
-	SayIn(room, text string) // one line of public chat in another channel
-	Action(text string)      // an emote in #main
-	PM(nick, text string)    // a private message
-	Online() []Person        // every connected human, server-wide (bot excluded)
-	OnlineCount() int        // len(Online()) without building the list; may be up to a second stale
-	IsAdmin(fp string) bool  // is this server-verified key fingerprint a server administrator?
+	Say(text string)              // one line of public chat in #main
+	SayIn(room, text string)      // one line of public chat in another channel
+	Action(text string)           // an emote in #main
+	PM(nick, text string)         // a private message
+	Online() []Person             // every connected human, server-wide (bot excluded)
+	OnlineCount() int             // len(Online()) without building the list; may be up to a second stale
+	IsAdmin(fp string) bool       // is this server-verified key fingerprint a server administrator?
+	TryPM(nick, text string) bool // like PM, but reports whether it was actually delivered (false if the user is gone or ignoring the bot)
 }
 
 type EventKind int
@@ -45,10 +47,11 @@ type Event struct {
 }
 
 type outLine struct {
-	room string // public lines: the channel to speak in ("" = #main)
-	pmTo string // "" = public
-	text string
-	kind int
+	tellID int64  // >0: a stored !tell; deleted only once TryPM confirms delivery
+	room   string // public lines: the channel to speak in ("" = #main)
+	pmTo   string // "" = public
+	text   string
+	kind   int
 }
 
 // Bot is the persona engine. All state is touched only from the Run loop
@@ -65,6 +68,8 @@ type Bot struct {
 	pk    *picker
 
 	out           chan []outLine // nil = deliver synchronously (tests)
+	tellMu        sync.Mutex
+	inflight      map[int64]bool // tells queued for delivery but not yet confirmed (guards double-sending)
 	userWin       map[string][]time.Time
 	userWarned    map[string]time.Time
 	globalWin     []time.Time
@@ -109,8 +114,9 @@ func New(host Host, o Options) (*Bot, error) {
 	b := &Bot{
 		cfg: cfg, c: content, st: st, host: host,
 		now: o.Now, sleep: o.Sleep,
-		trivia:  map[string]*activeTrivia{},
-		userWin: map[string][]time.Time{}, userWarned: map[string]time.Time{},
+		trivia:   map[string]*activeTrivia{},
+		inflight: map[int64]bool{},
+		userWin:  map[string][]time.Time{}, userWarned: map[string]time.Time{},
 		unmatchedPath: o.UnmatchedPath,
 	}
 	if b.now == nil {
@@ -232,7 +238,8 @@ func (b *Bot) emit(batch []outLine) {
 		lines += len(chunk(l.text, b.cfg.MaxMessageChars))
 	}
 	if len(b.globalWin)+lines > b.cfg.RateGlobalPerMin {
-		return // over the global cap: stay silent rather than flood the room
+		b.releaseTells(batch) // dropped, not delivered: any mail in it stays queued
+		return                // over the global cap: stay silent rather than flood the room
 	}
 	for i := 0; i < lines; i++ {
 		b.globalWin = append(b.globalWin, now)
@@ -244,6 +251,32 @@ func (b *Bot) emit(batch []outLine) {
 	select {
 	case b.out <- batch:
 	default: // speaker backed up; drop rather than queue unboundedly
+		b.releaseTells(batch)
+	}
+}
+
+// claimTell marks a stored tell as being delivered; false if it already is.
+func (b *Bot) claimTell(id int64) bool {
+	b.tellMu.Lock()
+	defer b.tellMu.Unlock()
+	if b.inflight[id] {
+		return false
+	}
+	b.inflight[id] = true
+	return true
+}
+
+func (b *Bot) releaseTell(id int64) {
+	b.tellMu.Lock()
+	delete(b.inflight, id)
+	b.tellMu.Unlock()
+}
+
+func (b *Bot) releaseTells(batch []outLine) {
+	for _, l := range batch {
+		if l.tellID > 0 {
+			b.releaseTell(l.tellID)
+		}
 	}
 }
 
@@ -269,6 +302,14 @@ func (b *Bot) deliver(batch []outLine) {
 			}
 			line = colourise(b.cfg.Colour, l.kind, line)
 			switch {
+			case l.tellID > 0:
+				// Mail: delete it only once it has really arrived. If the
+				// user left or is ignoring the bot it stays queued for the
+				// next login.
+				if b.host.TryPM(l.pmTo, line) {
+					b.st.deleteTell(l.tellID)
+				}
+				b.releaseTell(l.tellID)
 			case l.pmTo != "":
 				b.host.PM(l.pmTo, line)
 			case l.room != "":

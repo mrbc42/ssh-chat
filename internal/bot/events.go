@@ -141,10 +141,16 @@ func (b *Bot) onLogin(p Person) {
 	}
 
 	if tellsFor != "" {
-		for _, t := range b.st.takeTells(tellsFor) {
+		var mail []outLine
+		for _, t := range b.st.peekTells(tellsFor) {
+			if !b.claimTell(t.ID) {
+				continue // already on its way (e.g. a quick second login)
+			}
 			ago := humanAgo(now.Sub(t.At))
-			b.pm(p.Nick, b.text("tell_deliver", b.vars(p, "from", clean(t.FromNick, 24), "ago", ago, "msg", t.Body)))
+			mail = append(mail, outLine{tellID: t.ID, pmTo: p.Nick,
+				text: b.text("tell_deliver", b.vars(p, "from", clean(t.FromNick, 24), "ago", ago, "msg", t.Body))})
 		}
+		b.emit(mail)
 	}
 }
 

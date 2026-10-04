@@ -190,12 +190,14 @@ func (s *botStore) countTellsFrom(fp string) int {
 	return n
 }
 
-// takeTells returns and deletes every pending tell for fp, oldest first.
-func (s *botStore) takeTells(fp string) []tellRow {
+// peekTells returns every pending tell for fp, oldest first, without removing
+// them: a tell is only deleted (deleteTell) once it has really been delivered.
+func (s *botStore) peekTells(fp string) []tellRow {
 	rows, err := s.db.QueryContext(ctxbg, `SELECT id, from_nick, body, created_at FROM tells WHERE to_fp = ? ORDER BY id`, fp)
 	if err != nil {
 		return nil
 	}
+	defer rows.Close()
 	var out []tellRow
 	for rows.Next() {
 		var t tellRow
@@ -205,11 +207,11 @@ func (s *botStore) takeTells(fp string) []tellRow {
 			out = append(out, t)
 		}
 	}
-	rows.Close()
-	for _, t := range out {
-		_, _ = s.db.ExecContext(ctxbg, `DELETE FROM tells WHERE id = ?`, t.ID)
-	}
 	return out
+}
+
+func (s *botStore) deleteTell(id int64) {
+	_, _ = s.db.ExecContext(ctxbg, `DELETE FROM tells WHERE id = ?`, id)
 }
 
 func (s *botStore) purgeTells(olderThan time.Time) {

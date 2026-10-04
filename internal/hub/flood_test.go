@@ -345,3 +345,54 @@ func TestHistoryLimitsAndChannelScope(t *testing.T) {
 		}
 	}
 }
+
+func TestTryPMReportsRealDelivery(t *testing.T) {
+	h, _ := adminHub(t)
+	bot := NewSession("SHA256:bot", "", "robot")
+	bot.SetTrusted(true)
+	reader := NewSession("SHA256:reader", "1.1.1.1", "reader")
+	h.Main().Join(bot)
+	h.Main().Join(reader)
+	time.Sleep(100 * time.Millisecond)
+	drain(reader)
+
+	if h.TryPM(bot, "nobody", "hi") {
+		t.Fatal("a PM to an offline user must report not delivered")
+	}
+	if !h.TryPM(bot, "reader", "mail for you") {
+		t.Fatal("a PM to an online user should be delivered")
+	}
+	got := false
+	for _, l := range collectLines(reader) {
+		got = got || (l.Kind == KindPM && l.Body == "mail for you" && l.Sender == "robot")
+	}
+	if !got {
+		t.Fatal("the reader never received the PM")
+	}
+
+	reader.Ignore("robot") // the reader ignores the sender: report false, deliver nothing
+	drain(reader)
+	if h.TryPM(bot, "reader", "ignored mail") {
+		t.Fatal("a PM to a user ignoring the sender must report not delivered")
+	}
+	for _, l := range collectLines(reader) {
+		if l.Kind == KindPM {
+			t.Fatalf("an ignored sender's PM was delivered: %q", l.Body)
+		}
+	}
+}
+
+func collectLines(s *Session) []Line {
+	time.Sleep(150 * time.Millisecond)
+	var out []Line
+	for {
+		select {
+		case o := <-s.Outbox:
+			if o.Line != nil {
+				out = append(out, *o.Line)
+			}
+		default:
+			return out
+		}
+	}
+}

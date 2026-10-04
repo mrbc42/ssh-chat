@@ -12,12 +12,13 @@ import (
 type pmMsg struct{ to, text string }
 
 type fakeHost struct {
-	admins  map[string]bool     // fingerprints the server treats as administrators
-	sayIn   map[string][]string // lines spoken in channels other than #main
-	said    []string
-	actions []string
-	pms     []pmMsg
-	online  []Person
+	ignoring map[string]bool     // nicks that are ignoring the bot (their private messages are not delivered)
+	admins   map[string]bool     // fingerprints the server treats as administrators
+	sayIn    map[string][]string // lines spoken in channels other than #main
+	said     []string
+	actions  []string
+	pms      []pmMsg
+	online   []Person
 }
 
 func (f *fakeHost) Say(t string)           { f.said = append(f.said, t) }
@@ -27,6 +28,13 @@ func (f *fakeHost) PM(n, t string)         { f.pms = append(f.pms, pmMsg{n, t}) 
 func (f *fakeHost) Online() []Person       { return f.online }
 func (f *fakeHost) OnlineCount() int       { return len(f.online) }
 func (f *fakeHost) IsAdmin(fp string) bool { return f.admins[fp] }
+func (f *fakeHost) TryPM(n, t string) bool {
+	if f.ignoring[n] {
+		return false
+	}
+	f.pms = append(f.pms, pmMsg{n, t})
+	return true
+}
 func (f *fakeHost) reset() {
 	f.said, f.pms, f.actions = nil, nil, nil
 	f.sayIn = map[string][]string{}
@@ -51,7 +59,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	e := &env{t: t, h: &fakeHost{sayIn: map[string][]string{}, admins: map[string]bool{}}, clock: time.Date(2026, 10, 7, 14, 0, 0, 0, time.UTC)} // a Wednesday afternoon
+	e := &env{t: t, h: &fakeHost{sayIn: map[string][]string{}, admins: map[string]bool{}, ignoring: map[string]bool{}}, clock: time.Date(2026, 10, 7, 14, 0, 0, 0, time.UTC)} // a Wednesday afternoon
 	e.dbPath = filepath.Join(t.TempDir(), "bot.db")
 	b, err := New(e.h, Options{
 		DBPath:        e.dbPath,
@@ -1156,5 +1164,84 @@ func TestMotdSurvivesARestart(t *testing.T) {
 	b2.st.set("motd", "")
 	if got := b2.currentMotd(); got != "" {
 		t.Fatalf("a cleared MOTD must stay cleared, got %q", got)
+	}
+}
+
+// Mail is only deleted once it has really been delivered, so it can never be
+// lost to the bot's output cap, a full queue, or a user who is ignoring him.
+func TestTellIsKeptUntilItIsReallyDelivered(t *testing.T) {
+	e := newEnv(t)
+	alice, bob := keyed("a", "Alice"), keyed("b", "Bob")
+	e.login(bob)
+	e.logoff(bob)
+	e.login(alice)
+	e.chat(alice, "hi")
+	e.advance(time.Minute)
+	e.chat(alice, "!tell Bob mind the gap")
+	if n := e.b.st.countTellsTo("SHA256:b"); n != 1 {
+		t.Fatalf("setup: %d tells queued", n)
+	}
+	delivered := func() bool {
+		for _, m := range e.h.pmsExceptMotd() {
+			if strings.Contains(m.text, "mind the gap") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// 1) Bob is ignoring Gus when it arrives: not delivered, not deleted.
+	e.h.ignoring["Bob"] = true
+	e.advance(time.Hour)
+	e.h.reset()
+	e.login(bob)
+	if delivered() || e.b.st.countTellsTo("SHA256:b") != 1 {
+		t.Fatalf("mail to a user ignoring Gus must stay queued: pms=%v left=%d", e.h.pms, e.b.st.countTellsTo("SHA256:b"))
+	}
+	if len(e.b.inflight) != 0 {
+		t.Fatalf("an undelivered tell must not stay marked in flight: %v", e.b.inflight)
+	}
+
+	// 2) The bot's output cap drops the batch: the mail survives that too.
+	e.logoff(bob)
+	e.h.ignoring["Bob"] = false
+	e.b.cfg.RateGlobalPerMin = 0
+	e.advance(time.Hour)
+	e.h.reset()
+	e.login(bob)
+	if delivered() || e.b.st.countTellsTo("SHA256:b") != 1 || len(e.b.inflight) != 0 {
+		t.Fatalf("mail dropped by the output cap must stay queued: left=%d inflight=%v", e.b.st.countTellsTo("SHA256:b"), e.b.inflight)
+	}
+
+	// 3) A tell already on its way is not sent twice by a quick second login.
+	e.logoff(bob)
+	e.b.cfg.RateGlobalPerMin = 30
+	var id int64
+	for _, tr := range e.b.st.peekTells("SHA256:b") {
+		id = tr.ID
+	}
+	e.b.inflight[id] = true
+	e.advance(time.Hour)
+	e.h.reset()
+	e.login(bob)
+	if delivered() {
+		t.Fatal("a tell that is already in flight was sent again")
+	}
+	delete(e.b.inflight, id)
+
+	// 4) Finally it is delivered, once, and only then deleted.
+	e.logoff(bob)
+	e.advance(time.Hour)
+	e.h.reset()
+	e.login(bob)
+	if !delivered() || e.b.st.countTellsTo("SHA256:b") != 0 || len(e.b.inflight) != 0 {
+		t.Fatalf("mail should now arrive and be deleted: pms=%v left=%d", e.h.pms, e.b.st.countTellsTo("SHA256:b"))
+	}
+	e.logoff(bob)
+	e.h.reset()
+	e.advance(time.Hour)
+	e.login(bob)
+	if delivered() {
+		t.Fatal("delivered mail came back")
 	}
 }
