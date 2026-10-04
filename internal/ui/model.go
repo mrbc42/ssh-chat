@@ -20,7 +20,6 @@ import (
 
 const minUsableWidth = 20
 const minUsableHeight = 6
-const bannerText = "S S H - C H A T   B B S"
 const fixedRows = 4 // banner + blank separator + status bar + input line
 
 type outboundMsg struct{ ob hub.Outbound }
@@ -172,7 +171,7 @@ func (m *Model) layout() {
 	statLayoutLines.Add(int64(len(m.lines)))
 	m.lastNick = "" // force the prompt width to be recomputed for the new size
 	m.syncPrompt()
-	m.banner = m.sty.Banner.Width(m.width).Align(lipgloss.Center).Render(bannerText)
+	m.banner = m.renderBanner()
 	m.rows, m.rowsPer, m.scroll, m.unread = nil, make([]int, len(m.lines)), 0, 0
 	for i, l := range m.lines {
 		r := cachedRows(l, m.sty, m.width)
@@ -496,7 +495,7 @@ func (m Model) View() string {
 	}
 	banner, bar := m.banner, m.bar
 	if banner == "" { // before the first layout
-		banner = m.sty.Banner.Width(m.width).Align(lipgloss.Center).Render(bannerText)
+		banner = m.renderBanner()
 	}
 	if bar == "" {
 		m.refreshBar()

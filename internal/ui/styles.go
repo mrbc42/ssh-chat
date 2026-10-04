@@ -103,7 +103,7 @@ type styles struct {
 func newStyles(r *lipgloss.Renderer) *styles {
 	c := func(hex string) lipgloss.Color { return fastColor(r, hex) }
 	s := &styles{
-		Banner:      r.NewStyle().Background(c("#5f00af")).Foreground(c("#ffd700")).Bold(true),
+		Banner:      r.NewStyle().Background(c(banner.BG)).Foreground(c(banner.FG)).Bold(true),
 		StatusBar:   r.NewStyle().Background(c("#005f87")).Foreground(c("#ffffff")).Bold(true).Padding(0, 1),
 		InputPrompt: r.NewStyle().Foreground(c("#5fff5f")).Bold(true),
 		Timestamp:   r.NewStyle().Foreground(c("#767676")),

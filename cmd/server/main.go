@@ -21,6 +21,7 @@ import (
 	"github.com/mrbc42/ssh-chat/internal/hub"
 	"github.com/mrbc42/ssh-chat/internal/sshserver"
 	"github.com/mrbc42/ssh-chat/internal/store"
+	"github.com/mrbc42/ssh-chat/internal/ui"
 )
 
 // version is set at build time (-ldflags "-X main.version=…", from the
@@ -48,6 +49,9 @@ func main() {
 	flag.IntVar(&sshserver.MaxConnsPerIP, "max-conns-per-ip", sshserver.MaxConnsPerIP, "max concurrent connections from one IP")
 	flag.IntVar(&sshserver.MaxConnsPerMinute, "max-conns-per-min", sshserver.MaxConnsPerMinute, "max new connections per minute from one IP")
 	adminFPsFlag := flag.String("admin-fps", "", "comma-separated admin SSH key fingerprints (SHA256:...), in addition to the -admins file")
+	bannerText := flag.String("banner-text", "", "text of the coloured banner at the top of the chat window (default \""+ui.DefaultBannerText+"\")")
+	bannerBG := flag.String("banner-bg", "", "banner background colour, hex like #5f00af (default "+ui.DefaultBannerBG+")")
+	bannerFG := flag.String("banner-fg", "", "banner text colour, hex like #ffd700 (default "+ui.DefaultBannerFG+")")
 	// Settings may come from SSHCHAT_* environment variables (e.g. a .env /
 	// env_file / quadlet EnvironmentFile); explicit flags still win.
 	fromEnv, err := applyEnv(flag.CommandLine, os.LookupEnv)
@@ -68,6 +72,12 @@ func main() {
 		log.Fatalf("opening store: %v", err)
 	}
 	defer st.Close()
+
+	bcfg, err := ui.ParseBanner(*bannerText, *bannerBG, *bannerFG)
+	if err != nil {
+		log.Fatalf("banner: %v", err)
+	}
+	ui.SetBanner(bcfg)
 
 	adminFPs := loadAdminFPs(*adminsPath)
 	for _, fp := range splitList(*adminFPsFlag) {

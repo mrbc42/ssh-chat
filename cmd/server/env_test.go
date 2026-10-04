@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -75,5 +76,26 @@ func TestSplitList(t *testing.T) {
 	got := splitList("SHA256:aaa, SHA256:bbb\nSHA256:ccc ,,")
 	if len(got) != 3 || got[1] != "SHA256:bbb" {
 		t.Fatalf("%q", got)
+	}
+}
+
+// Every option must be defined BEFORE the environment is applied, or its
+// SSHCHAT_* variable is silently ignored (a flag defined after applyEnv still
+// works on the command line but not from a .env).
+func TestAllFlagsAreDefinedBeforeTheEnvironmentIsApplied(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	at := strings.Index(text, "applyEnv(flag.CommandLine")
+	end := strings.Index(text, "flag.Parse()")
+	if at < 0 || end < at {
+		t.Fatal("could not find applyEnv / flag.Parse in main.go")
+	}
+	for _, def := range []string{"flag.String(", "flag.Bool(", "flag.Int(", "flag.Duration(", "flag.IntVar(", "flag.StringVar(", "flag.BoolVar(", "flag.DurationVar("} {
+		if strings.Contains(text[at:end], def) {
+			t.Errorf("%s appears after applyEnv: that option would ignore its SSHCHAT_* environment variable", def)
+		}
 	}
 }
