@@ -463,3 +463,71 @@ func TestAdvertisedScrollKeysWork(t *testing.T) {
 		}
 	}
 }
+
+func TestMotdIsDrawnAsARedBoxWithTheLabelInTheTopBorder(t *testing.T) {
+	// True colour, so the exact red can be checked in the escape sequence.
+	r := lipgloss.NewRenderer(io.Discard)
+	r.SetColorProfile(termenv.TrueColor)
+	sty := newStyles(r)
+	text := "Server maintenance is on Sunday at 2am, please finish what you are doing before then and say goodbye to your friends."
+
+	rows := renderRows(hub.Line{Kind: hub.KindMotd, Body: text}, sty, 100)
+	plain := make([]string, len(rows))
+	for i, row := range rows {
+		plain[i] = ansiStrip(row)
+	}
+
+	if !strings.HasPrefix(plain[0], "┌─ MOTD ─") || !strings.HasSuffix(plain[0], "┐") {
+		t.Fatalf("top border should break around the label at the left: %q", plain[0])
+	}
+	last := plain[len(plain)-1]
+	if !strings.HasPrefix(last, "└─") || !strings.HasSuffix(last, "┘") {
+		t.Fatalf("bottom border: %q", last)
+	}
+	boxWidth := lipgloss.Width(plain[0])
+	if boxWidth != maxMotdBoxWidth {
+		t.Fatalf("on a wide terminal the box is capped at %d columns, got %d", maxMotdBoxWidth, boxWidth)
+	}
+	var words []string
+	for i, p := range plain {
+		if lipgloss.Width(p) != boxWidth {
+			t.Errorf("row %d is %d wide, want a straight box of %d: %q", i, lipgloss.Width(p), boxWidth, p)
+		}
+		if i > 0 && i < len(plain)-1 {
+			if !strings.HasPrefix(p, "│ ") || !strings.HasSuffix(p, " │") {
+				t.Errorf("text row %d must sit between side borders: %q", i, p)
+			}
+			words = append(words, strings.Fields(strings.Trim(p, "│ "))...)
+		}
+	}
+	if len(plain) < 4 || strings.Join(words, " ") != text {
+		t.Fatalf("long text should wrap onto several rows inside the box, losing nothing: %q", plain)
+	}
+	// The box (borders and label) is red; the text is not.
+	const red = "38;2;255;48;48"
+	if !strings.Contains(rows[0], red) || !strings.Contains(rows[len(rows)-1], red) || !strings.Contains(rows[1], red) {
+		t.Fatalf("borders must be red (%s): %q", red, rows[0])
+	}
+	if n := strings.Count(rows[1], red); n != 2 { // the two side borders only, not the text
+		t.Fatalf("red should colour just the left and right borders of a text row, found %d uses: %q", n, rows[1])
+	}
+
+	// Narrow terminal: a smaller straight box; tiny terminal: plain fallback.
+	for _, w := range []int{40, 20} {
+		rows := renderRows(hub.Line{Kind: hub.KindMotd, Body: text}, sty, w)
+		for i, row := range rows {
+			if lipgloss.Width(row) != w {
+				t.Errorf("width %d row %d is %d wide: %q", w, i, lipgloss.Width(row), ansiStrip(row))
+			}
+		}
+	}
+	tiny := renderRows(hub.Line{Kind: hub.KindMotd, Body: "hi"}, sty, 10)
+	if len(tiny) != 1 || !strings.Contains(ansiStrip(tiny[0]), "MOTD: hi") {
+		t.Fatalf("a terminal too narrow for a box should get a plain line: %q", tiny)
+	}
+	// A short message still gets a full box.
+	short := renderRows(hub.Line{Kind: hub.KindMotd, Body: "Welcome"}, sty, 100)
+	if len(short) != 3 || !strings.Contains(ansiStrip(short[1]), "Welcome") {
+		t.Fatalf("short message: %q", short)
+	}
+}

@@ -15,6 +15,7 @@ const (
 	KindAdmin  LineKind = "admin"  // delivered admin alert / server broadcast
 	KindPM     LineKind = "pm"     // private message (Sender + Dir set)
 	KindAction LineKind = "action" // /me emote (Sender set)
+	KindMotd   LineKind = "motd"   // the message of the day: drawn by the UI as a boxed block (Body = the text)
 )
 
 // Line is one line of chat/system/command output, carrying enough

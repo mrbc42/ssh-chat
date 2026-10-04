@@ -257,10 +257,11 @@ func (b *Bot) cmdMotd(p Person, args string) {
 		b.say(kindPlain, b.text("motd_set", b.vars(p)))
 		return
 	}
+	// Shown to the asker only, as the same boxed block they get at login.
 	if text := b.currentMotd(); text != "" {
-		b.say(kindPlain, b.text("motd_intro", b.vars(p)), text)
+		b.emit([]outLine{{pmTo: p.Nick, motd: true, text: text}})
 	} else {
-		b.say(kindPlain, b.text("motd_none", b.vars(p)))
+		b.pm(p.Nick, b.text("motd_none", b.vars(p)))
 	}
 }
 

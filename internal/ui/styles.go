@@ -94,8 +94,8 @@ type styles struct {
 	nickSlots  []lipgloss.Style
 
 	// Precomputed escape-sequence forms of the styles used per chat line.
-	fTimestamp, fChat, fError, fInfo, fSystem, fAdmin, fPM, fBar ansiStyle
-	fNick                                                        []ansiStyle
+	fTimestamp, fChat, fError, fInfo, fSystem, fAdmin, fPM, fBar, fBox ansiStyle
+	fNick                                                              []ansiStyle
 }
 
 // newStyles is used through a pointer: the whole struct is large and the UI
@@ -125,7 +125,8 @@ func newStyles(r *lipgloss.Renderer) *styles {
 	}
 	s.fTimestamp, s.fChat, s.fError, s.fInfo = fastOf(s.Timestamp), fastOf(s.ChatBody), fastOf(s.ErrorLine), fastOf(s.InfoLine)
 	s.fSystem, s.fAdmin, s.fPM = fastOf(s.SystemLine), fastOf(s.AdminLine), fastOf(s.PMLine)
-	s.fBar = fastOf(s.StatusBar.UnsetPadding()) // padding is added by hand in renderStatusBar
+	s.fBox = fastOf(r.NewStyle().Foreground(c("#ff3030")).Bold(true)) // the MOTD box is red
+	s.fBar = fastOf(s.StatusBar.UnsetPadding())                       // padding is added by hand in renderStatusBar
 	return s
 }
 

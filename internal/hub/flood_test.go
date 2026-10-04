@@ -396,3 +396,36 @@ func collectLines(s *Session) []Line {
 		}
 	}
 }
+
+func TestShowMotdGoesToOneUserEvenIfTheyIgnoreTheBot(t *testing.T) {
+	h, _ := adminHub(t)
+	a := NewSession("SHA256:a", "1.1.1.1", "alice")
+	b := NewSession("SHA256:b", "2.2.2.2", "bob")
+	h.Main().Join(a)
+	h.Main().Join(b)
+	time.Sleep(100 * time.Millisecond)
+	a.Ignore("SysOp-Gus") // the user has ignored the bot: the MOTD is still server information
+	drain(a)
+	drain(b)
+
+	if !h.ShowMotd("alice", "Be excellent to each other") {
+		t.Fatal("ShowMotd to an online user should report delivered")
+	}
+	if h.ShowMotd("nobody", "x") {
+		t.Fatal("ShowMotd to an offline user must report not delivered")
+	}
+	got := 0
+	for _, l := range collectLines(a) {
+		if l.Kind == KindMotd && l.Body == "Be excellent to each other" {
+			got++
+		}
+	}
+	if got != 1 {
+		t.Fatalf("alice should receive exactly one MOTD block, got %d", got)
+	}
+	for _, l := range collectLines(b) {
+		if l.Kind == KindMotd {
+			t.Fatal("the MOTD must go to the one user only")
+		}
+	}
+}

@@ -20,14 +20,15 @@ type Person struct {
 
 // Host is everything the bot needs from the chat server.
 type Host interface {
-	Say(text string)              // one line of public chat in #main
-	SayIn(room, text string)      // one line of public chat in another channel
-	Action(text string)           // an emote in #main
-	PM(nick, text string)         // a private message
-	Online() []Person             // every connected human, server-wide (bot excluded)
-	OnlineCount() int             // len(Online()) without building the list; may be up to a second stale
-	IsAdmin(fp string) bool       // is this server-verified key fingerprint a server administrator?
-	TryPM(nick, text string) bool // like PM, but reports whether it was actually delivered (false if the user is gone or ignoring the bot)
+	Say(text string)                 // one line of public chat in #main
+	SayIn(room, text string)         // one line of public chat in another channel
+	Action(text string)              // an emote in #main
+	PM(nick, text string)            // a private message
+	Online() []Person                // every connected human, server-wide (bot excluded)
+	OnlineCount() int                // len(Online()) without building the list; may be up to a second stale
+	IsAdmin(fp string) bool          // is this server-verified key fingerprint a server administrator?
+	TryPM(nick, text string) bool    // like PM, but reports whether it was actually delivered (false if the user is gone or ignoring the bot)
+	ShowMotd(nick, text string) bool // show the message of the day, as a boxed block, to one user
 }
 
 type EventKind int
@@ -48,6 +49,7 @@ type Event struct {
 
 type outLine struct {
 	tellID int64  // >0: a stored !tell; deleted only once TryPM confirms delivery
+	motd   bool   // pmTo is shown the message of the day (text) as a boxed block
 	room   string // public lines: the channel to speak in ("" = #main)
 	pmTo   string // "" = public
 	text   string
@@ -310,6 +312,8 @@ func (b *Bot) deliver(batch []outLine) {
 					b.st.deleteTell(l.tellID)
 				}
 				b.releaseTell(l.tellID)
+			case l.motd:
+				b.host.ShowMotd(l.pmTo, line)
 			case l.pmTo != "":
 				b.host.PM(l.pmTo, line)
 			case l.room != "":

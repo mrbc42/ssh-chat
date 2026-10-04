@@ -239,17 +239,13 @@ func TestMotdAdminKeyOnTheRealHub(t *testing.T) {
 
 	late := hub.NewSession("SHA256:late", "3.3.3.3", "Late")
 	h.Main().Join(late)
-	_, pm := fromBot(collect(late, 2*time.Second))
-	found := false
-	for _, m := range pm {
-		found = found || m == "MOTD: Server restarts at midnight"
-	}
-	if !found {
-		t.Fatalf("the next login should be sent the admin's MOTD privately, got %v", pm)
-	}
-	for _, m := range pm {
-		if strings.Contains(m, "Pwned") {
-			t.Fatalf("a non-admin key managed to set the MOTD: %v", pm)
+	var motds []string
+	for _, l := range collect(late, 2*time.Second) {
+		if l.Kind == hub.KindMotd {
+			motds = append(motds, l.Body)
 		}
+	}
+	if len(motds) != 1 || motds[0] != "Server restarts at midnight" {
+		t.Fatalf("the next login should be shown the admin's MOTD as a boxed block, got %v", motds)
 	}
 }

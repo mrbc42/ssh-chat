@@ -74,6 +74,8 @@ func (hh *hubHost) Online() []Person {
 
 // OnlineCount uses the hub's shared once-a-second count instead of walking
 // every session, which the bot used to do on every single chat message.
+func (hh *hubHost) ShowMotd(nick, text string) bool { return hh.h.ShowMotd(nick, text) }
+
 func (hh *hubHost) TryPM(nick, text string) bool { return hh.h.TryPM(hh.sess, nick, text) }
 
 func (hh *hubHost) IsAdmin(fp string) bool { return hh.h.IsAdmin(fp) }

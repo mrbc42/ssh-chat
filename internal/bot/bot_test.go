@@ -12,6 +12,7 @@ import (
 type pmMsg struct{ to, text string }
 
 type fakeHost struct {
+	motds    []pmMsg             // boxed MOTD blocks shown to a user (to = nick)
 	ignoring map[string]bool     // nicks that are ignoring the bot (their private messages are not delivered)
 	admins   map[string]bool     // fingerprints the server treats as administrators
 	sayIn    map[string][]string // lines spoken in channels other than #main
@@ -21,13 +22,14 @@ type fakeHost struct {
 	online   []Person
 }
 
-func (f *fakeHost) Say(t string)           { f.said = append(f.said, t) }
-func (f *fakeHost) SayIn(room, t string)   { f.sayIn[room] = append(f.sayIn[room], t) }
-func (f *fakeHost) Action(t string)        { f.actions = append(f.actions, t) }
-func (f *fakeHost) PM(n, t string)         { f.pms = append(f.pms, pmMsg{n, t}) }
-func (f *fakeHost) Online() []Person       { return f.online }
-func (f *fakeHost) OnlineCount() int       { return len(f.online) }
-func (f *fakeHost) IsAdmin(fp string) bool { return f.admins[fp] }
+func (f *fakeHost) Say(t string)              { f.said = append(f.said, t) }
+func (f *fakeHost) SayIn(room, t string)      { f.sayIn[room] = append(f.sayIn[room], t) }
+func (f *fakeHost) Action(t string)           { f.actions = append(f.actions, t) }
+func (f *fakeHost) PM(n, t string)            { f.pms = append(f.pms, pmMsg{n, t}) }
+func (f *fakeHost) Online() []Person          { return f.online }
+func (f *fakeHost) OnlineCount() int          { return len(f.online) }
+func (f *fakeHost) IsAdmin(fp string) bool    { return f.admins[fp] }
+func (f *fakeHost) ShowMotd(n, t string) bool { f.motds = append(f.motds, pmMsg{n, t}); return true }
 func (f *fakeHost) TryPM(n, t string) bool {
 	if f.ignoring[n] {
 		return false
@@ -36,7 +38,7 @@ func (f *fakeHost) TryPM(n, t string) bool {
 	return true
 }
 func (f *fakeHost) reset() {
-	f.said, f.pms, f.actions = nil, nil, nil
+	f.said, f.pms, f.actions, f.motds = nil, nil, nil, nil
 	f.sayIn = map[string][]string{}
 }
 func (f *fakeHost) joined(p Person) { f.online = append(f.online, p) }
@@ -239,7 +241,7 @@ func TestAddressedAndCommands(t *testing.T) {
 		e.advance(20 * time.Second) // stay under the per-user rate limit
 		e.h.reset()
 		e.chat(a, cmd)
-		if len(e.h.said) == 0 {
+		if len(e.h.said)+len(e.h.motds)+len(e.h.pms) == 0 { // !motd answers privately, in a box
 			t.Errorf("%s produced no reply", cmd)
 		}
 	}
@@ -1027,21 +1029,16 @@ func TestTriviaIsPerChannel(t *testing.T) {
 
 // pmsExceptMotd is the private messages minus the login MOTD, for tests about
 // other kinds of private message.
-func (f *fakeHost) pmsExceptMotd() []pmMsg {
-	var out []pmMsg
-	for _, m := range f.pms {
-		if !strings.HasPrefix(m.text, "MOTD: ") {
-			out = append(out, m)
-		}
-	}
-	return out
-}
+// pmsExceptMotd is kept for the tests written when the MOTD was a PM; the MOTD
+// is now a boxed block of its own (see motds), so this is simply the PMs.
+func (f *fakeHost) pmsExceptMotd() []pmMsg { return f.pms }
 
+// motdPMs is the MOTD texts shown (as boxes) to nick.
 func (e *env) motdPMs(nick string) []string {
 	var out []string
-	for _, m := range e.h.pms {
-		if m.to == nick && strings.HasPrefix(m.text, "MOTD: ") {
-			out = append(out, strings.TrimPrefix(m.text, "MOTD: "))
+	for _, m := range e.h.motds {
+		if m.to == nick {
+			out = append(out, m.text)
 		}
 	}
 	return out
@@ -1110,8 +1107,9 @@ func TestOnlyAdminsCanSetTheMotdAndItTakesEffectImmediately(t *testing.T) {
 	if got := e.b.currentMotd(); got != "Maintenance tonight at 9 [31mpm [0m" && strings.ContainsRune(got, 0x1b) {
 		t.Fatalf("control characters must be stripped from the stored MOTD: %q", got)
 	}
-	if got := say(user, "!motd"); !strings.Contains(got, "Maintenance tonight at 9") {
-		t.Fatalf("!motd should show the new text: %q", got)
+	say(user, "!motd")
+	if got := e.motdPMs("User"); len(got) != 1 || !strings.Contains(got[0], "Maintenance tonight at 9") || len(e.h.said) != 0 {
+		t.Fatalf("!motd should show the new text, to the asker only, in a box: motds=%v said=%v", e.h.motds, e.h.said)
 	}
 	e.logoff(user)
 	e.h.reset()
@@ -1131,8 +1129,9 @@ func TestOnlyAdminsCanSetTheMotdAndItTakesEffectImmediately(t *testing.T) {
 	if got := say(admin, "!motd clear"); !e.inPool("motd_cleared", e.b.vars(admin), got) {
 		t.Fatalf("clear: %q", got)
 	}
-	if got := say(user, "!motd"); !e.inPool("motd_none", e.b.vars(user), got) {
-		t.Fatalf("!motd after clear: %q", got)
+	say(user, "!motd")
+	if len(e.h.motds) != 0 || len(e.h.pms) != 1 || !e.inPool("motd_none", e.b.vars(user), e.h.pms[0].text) {
+		t.Fatalf("!motd after clear should say there is none, privately: motds=%v pms=%v", e.h.motds, e.h.pms)
 	}
 	e.logoff(user)
 	e.h.reset()

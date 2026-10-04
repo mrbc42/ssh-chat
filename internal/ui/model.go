@@ -616,6 +616,9 @@ func (m *Model) setCompletion(name string) {
 // rows are indented under the start of the message text, so a wrapped
 // sentence reads as one message rather than as several.
 func renderRows(l hub.Line, sty *styles, width int) []string {
+	if l.Kind == hub.KindMotd {
+		return motdBox(l.Body, sty, width)
+	}
 	prefix, pw, body, style := splitLine(l, sty)
 	// Too narrow (or a very long nick) for a hanging indent: wrap flush left.
 	if width <= 0 || pw > width/2 {

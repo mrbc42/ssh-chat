@@ -134,7 +134,7 @@ func (b *Bot) onLogin(p Person) {
 	}
 	b.say(kindEvent, line)                   // say() skips an empty line
 	if motd := b.currentMotd(); motd != "" { // everyone gets the message of the day, privately
-		b.pm(p.Nick, "MOTD: "+motd)
+		b.emit([]outLine{{pmTo: p.Nick, motd: true, text: motd}})
 	}
 	for _, t := range private {
 		b.pm(p.Nick, t)
