@@ -125,7 +125,7 @@ func newStyles(r *lipgloss.Renderer) *styles {
 	}
 	s.fTimestamp, s.fChat, s.fError, s.fInfo = fastOf(s.Timestamp), fastOf(s.ChatBody), fastOf(s.ErrorLine), fastOf(s.InfoLine)
 	s.fSystem, s.fAdmin, s.fPM = fastOf(s.SystemLine), fastOf(s.AdminLine), fastOf(s.PMLine)
-	s.fBox = fastOf(r.NewStyle().Foreground(c("#ff3030")).Bold(true)) // the MOTD box is red
+	s.fBox = fastOf(r.NewStyle().Foreground(c("#ff0000")).Bold(true)) // the MOTD box is pure red (palette 196 on 256-colour terminals; #ff3030 snaps to a pinkish 203)
 	s.fBar = fastOf(s.StatusBar.UnsetPadding())                       // padding is added by hand in renderStatusBar
 	return s
 }

@@ -504,7 +504,7 @@ func TestMotdIsDrawnAsARedBoxWithTheLabelInTheTopBorder(t *testing.T) {
 		t.Fatalf("long text should wrap onto several rows inside the box, losing nothing: %q", plain)
 	}
 	// The box (borders and label) is red; the text is not.
-	const red = "38;2;255;48;48"
+	const red = "38;2;255;0;0"
 	if !strings.Contains(rows[0], red) || !strings.Contains(rows[len(rows)-1], red) || !strings.Contains(rows[1], red) {
 		t.Fatalf("borders must be red (%s): %q", red, rows[0])
 	}
