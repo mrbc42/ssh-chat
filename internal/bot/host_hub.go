@@ -17,6 +17,7 @@ const botFP = "SHA256:bot-sysop"
 // hubHost connects a Bot to the chat hub: it is both the Host the bot speaks
 // through and the hub.Observer that feeds it events.
 type hubHost struct {
+	nick   string
 	ctx    context.Context
 	h      *hub.Hub
 	sess   *hub.Session
@@ -31,6 +32,7 @@ func Start(ctx context.Context, h *hub.Hub, st *store.Store, o Options) (string,
 	if err != nil {
 		return "", err
 	}
+	hh.nick = b.Nick()
 	hh.sess = hub.NewSession(botFP, "", b.Nick())
 	hh.sess.SetTrusted(true) // the bot enforces its own output limits
 	// Reserve the nickname so no user can take it, even while the bot is down.
@@ -53,8 +55,9 @@ func Start(ctx context.Context, h *hub.Hub, st *store.Store, o Options) (string,
 	return b.Nick(), nil
 }
 
-func (hh *hubHost) Say(text string)    { hub.HandleInput(hh.ctx, hh.h, hh.sess, text) }
-func (hh *hubHost) Action(text string) { hub.HandleInput(hh.ctx, hh.h, hh.sess, "/me "+text) }
+func (hh *hubHost) Say(text string)         { hub.HandleInput(hh.ctx, hh.h, hh.sess, text) }
+func (hh *hubHost) SayIn(room, text string) { hh.h.SayIn(hh.sess, room, text) }
+func (hh *hubHost) Action(text string)      { hub.HandleInput(hh.ctx, hh.h, hh.sess, "/me "+text) }
 func (hh *hubHost) PM(nick, text string) {
 	hub.HandleInput(hh.ctx, hh.h, hh.sess, "/msg "+nick+" "+text)
 }
@@ -98,7 +101,21 @@ func (hh *hubHost) OnPart(room string, s *hub.Session, disconnect bool) {
 }
 
 func (hh *hubHost) OnChat(room string, s *hub.Session, body string, action bool) {
-	if s != hh.sess && !action && strings.EqualFold(room, store.MainChannelName) {
-		hh.push(Event{Kind: EvChat, P: person(s), Body: body})
+	if s == hh.sess || action {
+		return
 	}
+	// #main: the bot sees everything (greetings, activity). Other channels:
+	// only what is meant for it, so a busy channel can't flood the bot's queue.
+	if strings.EqualFold(room, store.MainChannelName) || addressesBot(body, hh.nick) {
+		hh.push(Event{Kind: EvChat, P: person(s), Body: body, Room: room})
+	}
+}
+
+// addressesBot is a cheap pre-filter for chat outside #main: a !command, or a
+// message that names the bot ("@Nick", "Nick:", "Nick,").
+func addressesBot(body, nick string) bool {
+	t := strings.ToLower(strings.TrimSpace(body))
+	n := strings.ToLower(nick)
+	return strings.HasPrefix(t, "!") || strings.Contains(t, "@"+n) ||
+		strings.HasPrefix(t, n+":") || strings.HasPrefix(t, n+",")
 }

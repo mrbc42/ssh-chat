@@ -145,3 +145,57 @@ func contains2(list []string, s string) bool {
 	}
 	return false
 }
+
+// On the real hub: a !command typed in another channel is answered there, and
+// only there.
+func TestBotAnswersInOtherChannelsOnTheRealHub(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := hub.NewHub(st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := filepath.Join(dir, "data")
+	_ = os.MkdirAll(data, 0o755)
+	_ = os.WriteFile(filepath.Join(data, "config.json"), []byte(`{"typing_delay_ms":[0,0]}`), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := Start(ctx, h, st, Options{DBPath: filepath.Join(dir, "bot.db"), UnmatchedPath: filepath.Join(dir, "u.log"), DataDir: data}); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.CreateChannel(ctx, "lounge", "SHA256:owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	room := h.GetOrLoadRoom(ctx, ch)
+
+	dave := hub.NewSession("SHA256:dave", "1.1.1.1", "Dave")
+	erin := hub.NewSession("SHA256:erin", "2.2.2.2", "Erin") // stays in #main
+	h.Main().Join(erin)
+	h.Main().Join(dave)
+	time.Sleep(200 * time.Millisecond)
+	collect(dave, 1500*time.Millisecond) // login greetings
+	collect(erin, 100*time.Millisecond)
+	room.Join(dave) // Dave moves to #lounge
+	time.Sleep(200 * time.Millisecond)
+	collect(dave, 300*time.Millisecond)
+
+	hub.HandleInput(ctx, h, dave, "!time")
+	chat, _ := fromBot(collect(dave, 1200*time.Millisecond))
+	if len(chat) != 1 || !strings.Contains(chat[0], ":") {
+		t.Fatalf("no !time reply in #lounge: %v", chat)
+	}
+	if mainChat, _ := fromBot(collect(erin, 300*time.Millisecond)); len(mainChat) != 0 {
+		t.Fatalf("the #lounge reply leaked into #main: %v", mainChat)
+	}
+
+	// Plain chat in #lounge stays unanswered.
+	hub.HandleInput(ctx, h, dave, "just chatting here")
+	chat, pm := fromBot(collect(dave, 800*time.Millisecond))
+	if len(chat)+len(pm) != 0 {
+		t.Fatalf("Gus spoke during normal chat in #lounge: %v %v", chat, pm)
+	}
+}

@@ -42,6 +42,7 @@ func main() {
 	botData := flag.String("bot-data", "", "optional directory of bot data files overriding the built-in persona/content")
 	botDB := flag.String("bot-db", "", "bot SQLite database (default: <db dir>/bot.db)")
 	retention := flag.Duration("retention", 90*24*time.Hour, "delete chat history older than this (0 keeps everything)")
+	permanentChannels := flag.String("permanent-channels", "", "comma-separated channel names created at startup that are never expired or deleted")
 	roomExpiry := flag.Duration("room-expiry", 30*24*time.Hour, "delete empty channels idle this long (0 disables)")
 	pprofAddr := flag.String("pprof", "", "debug: serve runtime profiling (pprof) on this address, e.g. 127.0.0.1:6060; off by default")
 	flag.IntVar(&sshserver.MaxConnsPerIP, "max-conns-per-ip", sshserver.MaxConnsPerIP, "max concurrent connections from one IP")
@@ -79,6 +80,12 @@ func main() {
 
 	if *pprofAddr != "" {
 		go func() { log.Printf("pprof: %v", http.ListenAndServe(*pprofAddr, nil)) }()
+	}
+	if names := splitList(*permanentChannels); len(names) > 0 {
+		if err := h.EnsurePermanent(context.Background(), names); err != nil {
+			log.Fatalf("permanent channels: %v", err)
+		}
+		log.Printf("permanent channels: %s", strings.Join(names, ", "))
 	}
 	h.SetVersion(version)
 	h.StartJanitor(context.Background(), 30*time.Second)

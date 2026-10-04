@@ -13,11 +13,19 @@ type activeTrivia struct {
 	asked time.Time
 }
 
+// roomKey is the channel the current event came from, as a map key.
+func (b *Bot) roomKey() string {
+	if b.curRoom == "" {
+		return "main"
+	}
+	return b.curRoom
+}
+
 func (b *Bot) cmdTrivia(p Person, args string) {
 	switch strings.ToLower(args) {
 	case "":
-		if b.trivia != nil {
-			b.say(kindAnswer, b.text("trivia_already", b.vars(p)), "Q: "+b.trivia.q.Q)
+		if t := b.trivia[b.roomKey()]; t != nil {
+			b.say(kindAnswer, b.text("trivia_already", b.vars(p)), "Q: "+t.q.Q)
 			return
 		}
 		b.startTrivia(b.now())
@@ -31,30 +39,38 @@ func (b *Bot) cmdTrivia(p Person, args string) {
 func (b *Bot) startTrivia(now time.Time) {
 	mem := len(b.c.Trivia) / 2
 	q := b.c.Trivia[b.pk.listIndex("trivia", len(b.c.Trivia), mem)]
-	b.trivia = &activeTrivia{q: q, asked: now}
+	b.trivia[b.roomKey()] = &activeTrivia{q: q, asked: now}
 	b.st.incr("trivia_asked")
 	b.say(kindAnswer, b.text("trivia_ask", b.vars(Person{}, "seconds", strconv.Itoa(b.cfg.TriviaSeconds))), "Q: "+q.Q)
 }
 
-// checkTrivia reveals the answer once a question has gone unanswered too long.
+// checkTrivia reveals the answer in every channel where a question has gone
+// unanswered too long.
 func (b *Bot) checkTrivia(now time.Time) {
-	if b.trivia == nil || now.Sub(b.trivia.asked) < time.Duration(b.cfg.TriviaSeconds)*time.Second {
-		return
+	for room, t := range b.trivia {
+		if t == nil || now.Sub(t.asked) < time.Duration(b.cfg.TriviaSeconds)*time.Second {
+			continue
+		}
+		ans := t.q.A[0]
+		delete(b.trivia, room)
+		if room != "main" {
+			b.curRoom = room
+		}
+		b.say(kindAnswer, b.text("trivia_timeout", b.vars(Person{}, "answer", ans)))
+		b.curRoom = ""
 	}
-	ans := b.trivia.q.A[0]
-	b.trivia = nil
-	b.say(kindAnswer, b.text("trivia_timeout", b.vars(Person{}, "answer", ans)))
 }
 
 func (b *Bot) answerTrivia(p Person, guess string) {
-	if b.trivia == nil {
+	cur := b.trivia[b.roomKey()]
+	if cur == nil {
 		b.say(kindPlain, b.text("trivia_none", b.vars(p)))
 		return
 	}
 	g := normAnswer(guess)
-	for _, a := range b.trivia.q.A {
+	for _, a := range cur.q.A {
 		if g != "" && g == normAnswer(a) {
-			elapsed := b.now().Sub(b.trivia.asked)
+			elapsed := b.now().Sub(cur.asked)
 			pts := 1
 			switch {
 			case elapsed < 10*time.Second:
@@ -62,7 +78,7 @@ func (b *Bot) answerTrivia(p Person, guess string) {
 			case elapsed < 30*time.Second:
 				pts = 2
 			}
-			b.trivia = nil
+			delete(b.trivia, b.roomKey())
 			v := b.vars(p, "pts", strconv.Itoa(pts), "answer", a)
 			b.say(kindAnswer, b.text("trivia_correct", v))
 			if b.tracked(p) {

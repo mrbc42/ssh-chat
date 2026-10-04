@@ -19,11 +19,12 @@ type Person struct {
 
 // Host is everything the bot needs from the chat server.
 type Host interface {
-	Say(text string)      // one line of public chat in #main
-	Action(text string)   // an emote in #main
-	PM(nick, text string) // a private message
-	Online() []Person     // every connected human, server-wide (bot excluded)
-	OnlineCount() int     // len(Online()) without building the list; may be up to a second stale
+	Say(text string)         // one line of public chat in #main
+	SayIn(room, text string) // one line of public chat in another channel
+	Action(text string)      // an emote in #main
+	PM(nick, text string)    // a private message
+	Online() []Person        // every connected human, server-wide (bot excluded)
+	OnlineCount() int        // len(Online()) without building the list; may be up to a second stale
 }
 
 type EventKind int
@@ -39,9 +40,11 @@ type Event struct {
 	Kind EventKind
 	P    Person
 	Body string // EvChat only
+	Room string // EvChat only: the channel it was said in ("" or "main" = #main)
 }
 
 type outLine struct {
+	room string // public lines: the channel to speak in ("" = #main)
 	pmTo string // "" = public
 	text string
 	kind int
@@ -70,7 +73,8 @@ type Bot struct {
 	lastActivity time.Time
 	humanSince   bool // a human did something since the bot last spoke unprompted
 	lastLonely   time.Time
-	trivia       *activeTrivia
+	trivia       map[string]*activeTrivia // one live question per channel ("main", "lounge", ...)
+	curRoom      string                   // channel of the chat event being handled ("" = #main)
 	nodeRecord   int
 }
 
@@ -83,6 +87,10 @@ type Options struct {
 	Sleep         func(time.Duration)
 	Seed          [2]uint64
 }
+
+// isMain reports whether room names #main ("" counts: that is how the bot
+// itself and its scheduled posts refer to it).
+func isMain(room string) bool { return room == "" || strings.EqualFold(room, "main") }
 
 // New builds a bot. Call Run to start it.
 func New(host Host, o Options) (*Bot, error) {
@@ -100,6 +108,7 @@ func New(host Host, o Options) (*Bot, error) {
 	b := &Bot{
 		cfg: cfg, c: content, st: st, host: host,
 		now: o.Now, sleep: o.Sleep,
+		trivia:  map[string]*activeTrivia{},
 		userWin: map[string][]time.Time{}, userWarned: map[string]time.Time{},
 		unmatchedPath: o.UnmatchedPath,
 	}
@@ -166,7 +175,14 @@ func (b *Bot) Handle(ev Event) {
 	case EvLogoff:
 		b.onLogoff(ev.P)
 	case EvChat:
+		// Replies to a chat line go back to the channel it came from.
+		if isMain(ev.Room) {
+			b.curRoom = ""
+		} else {
+			b.curRoom = ev.Room
+		}
 		b.onChat(ev.P, ev.Body)
+		b.curRoom = ""
 	}
 }
 
@@ -188,7 +204,7 @@ func (b *Bot) say(kind int, texts ...string) {
 	var batch []outLine
 	for _, t := range texts {
 		if t != "" {
-			batch = append(batch, outLine{text: t, kind: kind})
+			batch = append(batch, outLine{room: b.curRoom, text: t, kind: kind})
 		}
 	}
 	b.emit(batch)
@@ -236,7 +252,7 @@ func (b *Bot) emit(batch []outLine) {
 func (b *Bot) deliver(batch []outLine) {
 	lo, hi := b.cfg.TypingDelayMs[0], b.cfg.TypingDelayMs[1]
 	if hi > 0 {
-		if b.cfg.TypingIndicator {
+		if b.cfg.TypingIndicator && batch[0].room == "" { // the indicator is a #main emote
 			b.host.Action("is typing...")
 		}
 		d := lo
@@ -251,9 +267,12 @@ func (b *Bot) deliver(batch []outLine) {
 				line = "." + line // never let echoed text become a server command
 			}
 			line = colourise(b.cfg.Colour, l.kind, line)
-			if l.pmTo != "" {
+			switch {
+			case l.pmTo != "":
 				b.host.PM(l.pmTo, line)
-			} else {
+			case l.room != "":
+				b.host.SayIn(l.room, line)
+			default:
 				b.host.Say(line)
 			}
 			if b.cfg.Baud > 0 {

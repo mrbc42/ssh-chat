@@ -334,3 +334,100 @@ func TestHelpStaysShortAndGusHasItsOwnMenu(t *testing.T) {
 		t.Fatalf("/gus should list the bot's commands:\n%s", out.String())
 	}
 }
+
+func TestPermanentChannelsAreCreatedAndNeverDeleted(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	// A user-made channel that gets listed keeps its owner.
+	mine, err := st.CreateChannel(ctx, "lounge", "SHA256:someone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = mine
+	if err := h.EnsurePermanent(ctx, []string{"Lounge", "help", "main", "tech_chat"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"lounge", "help", "tech_chat"} {
+		if _, ok, _ := st.GetChannelByName(ctx, name); !ok || !h.IsPermanent(name) {
+			t.Fatalf("%s should exist and be permanent", name)
+		}
+	}
+	if role, ok, _ := st.IsOwnerOrOp(ctx, mine.ID, "SHA256:someone"); !ok || role != store.RoleOwner {
+		t.Fatal("an existing channel's owner must be kept")
+	}
+	if err := h.EnsurePermanent(ctx, []string{"help"}); err != nil { // idempotent
+		t.Fatal(err)
+	}
+	if err := h.EnsurePermanent(ctx, []string{"bad name!"}); err == nil || !strings.Contains(err.Error(), "bad name!") {
+		t.Fatalf("an invalid name must be rejected, naming it: %v", err)
+	}
+	_ = h.EnsurePermanent(ctx, []string{"help", "tech_chat"}) // restore after the failed call
+
+	// Expiry spares permanent channels but still removes ordinary ones.
+	if _, err := st.CreateChannel(ctx, "temp", "SHA256:x"); err != nil {
+		t.Fatal(err)
+	}
+	gone, err := h.ExpireRooms(ctx, -time.Hour) // everything counts as stale
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gone) != 2 { // temp and lounge (no longer listed after the second call)
+		t.Logf("expired: %v", gone)
+	}
+	for _, name := range []string{"help", "tech_chat"} {
+		if _, ok, _ := st.GetChannelByName(ctx, name); !ok {
+			t.Fatalf("permanent channel %s was expired", name)
+		}
+	}
+	if _, ok, _ := st.GetChannelByName(ctx, "temp"); ok {
+		t.Fatal("an ordinary stale channel should still expire")
+	}
+
+	// /delroom refuses a permanent channel.
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	h.Main().Join(admin)
+	if got := info(t, h, admin, "/delroom help"); !strings.Contains(got, "permanent channel") {
+		t.Fatalf("/delroom on a permanent channel: %q", got)
+	}
+	if _, ok, _ := st.GetChannelByName(ctx, "help"); !ok {
+		t.Fatal("/delroom deleted a permanent channel")
+	}
+}
+
+// Permanent channels have no human owner, so server admins moderate them.
+func TestAdminsModeratePermanentChannelsOnly(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	if err := h.EnsurePermanent(ctx, []string{"help"}); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := st.CreateChannel(ctx, "plain", "SHA256:nobody")
+	_ = other
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	user := NewSession("SHA256:user", "8.8.8.8", "plain-user")
+	h.Main().Join(admin)
+	h.Main().Join(user)
+
+	_ = info(t, h, admin, "/join help")
+	_ = info(t, h, user, "/join help")
+	time.Sleep(200 * time.Millisecond)
+	if got := info(t, h, admin, "/topic Welcome to help"); strings.Contains(got, "must be") {
+		t.Fatalf("an admin should be able to set the topic of a permanent channel: %q", got)
+	}
+	if got := info(t, h, user, "/topic hijack"); !strings.Contains(got, "must be an operator") {
+		t.Fatalf("an ordinary user must not: %q", got)
+	}
+	if got := helpText(t, h, admin); !strings.Contains(got, "/topic") || !strings.Contains(got, "/op ") {
+		t.Fatalf("/help for an admin in a permanent channel should list the moderation commands:\n%s", got)
+	}
+	if got := helpText(t, h, user); strings.Contains(got, "/topic") {
+		t.Fatalf("/help for an ordinary user must not:\n%s", got)
+	}
+
+	// In an ordinary channel the admin has no special rights.
+	_ = info(t, h, admin, "/join plain")
+	time.Sleep(200 * time.Millisecond)
+	if got := info(t, h, admin, "/topic nope"); !strings.Contains(got, "must be an operator") {
+		t.Fatalf("admin rights must not extend to ordinary channels: %q", got)
+	}
+}

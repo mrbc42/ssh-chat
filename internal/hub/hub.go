@@ -26,7 +26,8 @@ type Hub struct {
 	filter    *filter.Filter
 	observer  Observer
 	version   string
-	botHelp   []string // the bot's command list for /gus (set once at startup; empty = no bot)
+	permanent map[string]bool // lowercase names of permanent channels (set once at startup)
+	botHelp   []string        // the bot's command list for /gus (set once at startup; empty = no bot)
 
 	onlineMu sync.Mutex // guards the cached online count below
 	onlineAt time.Time
@@ -280,6 +281,9 @@ func (h *Hub) DeleteRoom(ctx context.Context, name string) error {
 	if ch.IsMain {
 		return errors.New("the main lobby cannot be deleted")
 	}
+	if h.IsPermanent(ch.Name) {
+		return ErrPermanent
+	}
 	key := strings.ToLower(ch.Name)
 	h.mu.Lock()
 	r := h.rooms[key]
@@ -302,6 +306,9 @@ func (h *Hub) ExpireRooms(ctx context.Context, olderThan time.Duration) ([]strin
 	}
 	var gone []string
 	for _, ch := range stale {
+		if h.IsPermanent(ch.Name) {
+			continue
+		}
 		if r, ok := h.GetLoadedRoom(ch.Name); ok && r.Info().Members > 0 {
 			continue
 		}

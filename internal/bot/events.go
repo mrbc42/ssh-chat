@@ -175,14 +175,17 @@ func (b *Bot) onChat(p Person, body string) {
 	if body == "" {
 		return
 	}
-	b.humanActivity()
-	humans := b.host.OnlineCount()
-	if b.tracked(p) {
-		b.st.setNick(p.FP, p.Nick)
-		if b.st.bumpMessages(p.FP) == 1 && !b.busy(humans) {
-			b.say(kindEvent, b.text("first_message", b.vars(p)))
+	if b.curRoom == "" { // #main: activity tracking and the first-message reaction
+		b.humanActivity()
+		humans := b.host.OnlineCount()
+		if b.tracked(p) {
+			b.st.setNick(p.FP, p.Nick)
+			if b.st.bumpMessages(p.FP) == 1 && !b.busy(humans) {
+				b.say(kindEvent, b.text("first_message", b.vars(p)))
+			}
 		}
 	}
+	// In every channel, !commands and being addressed work the same.
 
 	addressed, text := b.parseAddress(body)
 	switch {
@@ -244,7 +247,7 @@ func (b *Bot) postIdle(now time.Time) {
 	start := b.st.getInt("idle_idx")
 	for i := 0; i < len(kinds); i++ {
 		k := kinds[(start+i)%len(kinds)]
-		if k == "trivia" && b.trivia != nil {
+		if k == "trivia" && b.trivia["main"] != nil {
 			continue
 		}
 		b.st.set("idle_idx", strconv.Itoa((start+i+1)%len(kinds)))

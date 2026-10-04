@@ -299,7 +299,7 @@ func Dispatch(ctx context.Context, h *Hub, sess *Session, line string) {
 			sendError(sess, "That command can't be used in #main.")
 			return
 		}
-		role, _, err := h.store.IsOwnerOrOp(ctx, room.ID, sess.FP)
+		role, err := h.effectiveRole(ctx, sess, room)
 		if err != nil {
 			sendError(sess, "Internal error checking permissions.")
 			return
@@ -370,7 +370,7 @@ func canUse(c *CmdCtx, cmd *Command) bool {
 	if room == nil || room == c.Hub.Main() {
 		return false
 	}
-	role, _, err := c.Store.IsOwnerOrOp(c.ctx, room.ID, c.Sess.FP)
+	role, err := c.Hub.effectiveRole(c.ctx, c.Sess, room)
 	if err != nil {
 		return false
 	}
@@ -1088,6 +1088,8 @@ func cmdDelroom(c *CmdCtx, args []string) []string {
 		return []string{fmt.Sprintf("Deleted #%s.", name)}
 	case errors.Is(err, store.ErrChannelNotFound):
 		return []string{fmt.Sprintf("No such channel #%s.", name)}
+	case errors.Is(err, ErrPermanent):
+		return []string{fmt.Sprintf("#%s is a permanent channel: it is listed in the server's permanent channels setting. Remove it there to delete it.", name)}
 	default:
 		return []string{err.Error()}
 	}

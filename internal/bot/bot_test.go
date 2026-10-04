@@ -12,19 +12,24 @@ import (
 type pmMsg struct{ to, text string }
 
 type fakeHost struct {
+	sayIn   map[string][]string // lines spoken in channels other than #main
 	said    []string
 	actions []string
 	pms     []pmMsg
 	online  []Person
 }
 
-func (f *fakeHost) Say(t string)     { f.said = append(f.said, t) }
-func (f *fakeHost) Action(t string)  { f.actions = append(f.actions, t) }
-func (f *fakeHost) PM(n, t string)   { f.pms = append(f.pms, pmMsg{n, t}) }
-func (f *fakeHost) Online() []Person { return f.online }
-func (f *fakeHost) OnlineCount() int { return len(f.online) }
-func (f *fakeHost) reset()           { f.said, f.pms, f.actions = nil, nil, nil }
-func (f *fakeHost) joined(p Person)  { f.online = append(f.online, p) }
+func (f *fakeHost) Say(t string)         { f.said = append(f.said, t) }
+func (f *fakeHost) SayIn(room, t string) { f.sayIn[room] = append(f.sayIn[room], t) }
+func (f *fakeHost) Action(t string)      { f.actions = append(f.actions, t) }
+func (f *fakeHost) PM(n, t string)       { f.pms = append(f.pms, pmMsg{n, t}) }
+func (f *fakeHost) Online() []Person     { return f.online }
+func (f *fakeHost) OnlineCount() int     { return len(f.online) }
+func (f *fakeHost) reset() {
+	f.said, f.pms, f.actions = nil, nil, nil
+	f.sayIn = map[string][]string{}
+}
+func (f *fakeHost) joined(p Person) { f.online = append(f.online, p) }
 func (f *fakeHost) left(p Person) {
 	for i, q := range f.online {
 		if q.ID == p.ID {
@@ -43,7 +48,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	e := &env{t: t, h: &fakeHost{}, clock: time.Date(2026, 10, 7, 14, 0, 0, 0, time.UTC)} // a Wednesday afternoon
+	e := &env{t: t, h: &fakeHost{sayIn: map[string][]string{}}, clock: time.Date(2026, 10, 7, 14, 0, 0, 0, time.UTC)} // a Wednesday afternoon
 	b, err := New(e.h, Options{
 		DBPath:        filepath.Join(t.TempDir(), "bot.db"),
 		UnmatchedPath: filepath.Join(t.TempDir(), "unmatched.log"),
@@ -628,10 +633,10 @@ func TestTriviaScoring(t *testing.T) {
 	e.h.reset()
 
 	e.chat(a, "!trivia")
-	if e.b.trivia == nil || !strings.Contains(e.said(), "Q: ") {
+	if e.b.trivia["main"] == nil || !strings.Contains(e.said(), "Q: ") {
 		t.Fatalf("trivia question not asked: %v", e.h.said)
 	}
-	answer := e.b.trivia.q.A[0]
+	answer := e.b.trivia["main"].q.A[0]
 	e.advance(10 * time.Second)
 	e.h.reset()
 	e.chat(b, "!trivia definitely wrong")
@@ -641,7 +646,7 @@ func TestTriviaScoring(t *testing.T) {
 	e.advance(5 * time.Second)
 	e.h.reset()
 	e.chat(a, "!trivia  The "+strings.ToUpper(answer)+"!")
-	if e.b.trivia != nil || !strings.Contains(e.said(), "Alice") {
+	if e.b.trivia["main"] != nil || !strings.Contains(e.said(), "Alice") {
 		t.Fatalf("correct answer not accepted: %v", e.h.said)
 	}
 	top := e.b.st.topScores(5)
@@ -660,13 +665,13 @@ func TestTriviaScoring(t *testing.T) {
 	e.chat(a, "!trivia")
 	e.advance(time.Minute)
 	e.chat(b, "!trivia")
-	if e.b.trivia == nil || !strings.Contains(e.said(), "Q:") {
+	if e.b.trivia["main"] == nil || !strings.Contains(e.said(), "Q:") {
 		t.Fatalf("expected the live question re-announced: %v", e.h.said)
 	}
 	e.advance(61 * time.Second)
 	e.h.reset()
 	e.b.Tick()
-	if e.b.trivia != nil || len(e.h.said) != 1 {
+	if e.b.trivia["main"] != nil || len(e.h.said) != 1 {
 		t.Fatalf("timeout did not reveal the answer: %v", e.h.said)
 	}
 }
@@ -677,7 +682,7 @@ func TestForgetAndRemember(t *testing.T) {
 	e.login(a)
 	e.login(b)
 	e.chat(a, "!trivia")
-	e.chat(a, "!trivia "+e.b.trivia.q.A[0])
+	e.chat(a, "!trivia "+e.b.trivia["main"].q.A[0])
 	e.advance(time.Minute)
 	e.chat(b, "!tell Alice hi") // online -> not queued; fine
 	e.advance(time.Minute)
@@ -860,7 +865,7 @@ func TestKeylessAdviceIsPrivate(t *testing.T) {
 	e.chat(ghost, "!trivia")
 	e.advance(5 * time.Second)
 	e.h.reset()
-	e.chat(ghost, "!trivia "+e.b.trivia.q.A[0])
+	e.chat(ghost, "!trivia "+e.b.trivia["main"].q.A[0])
 	if len(e.h.pms) != 1 || e.h.pms[0].to != "Ghost" || !e.inPool("trivia_anon", e.b.vars(ghost), e.h.pms[0].text) {
 		t.Fatalf("trivia_anon must be a PM to Ghost: said=%v pms=%v", e.h.said, e.h.pms)
 	}
@@ -901,5 +906,109 @@ func TestCommandHelpMatchesTheHandlers(t *testing.T) {
 	lines := HelpLines("SysOp-Gus")
 	if !strings.Contains(lines[0], "SysOp-Gus commands") || !strings.Contains(strings.Join(lines, "\n"), "!tell <user> <message>") {
 		t.Fatalf("server help section: %q", lines)
+	}
+}
+
+func (e *env) chatIn(room string, p Person, s string) {
+	e.b.Handle(Event{Kind: EvChat, P: p, Body: s, Room: room})
+}
+
+// Gus's !commands and being addressed work in every channel, answering in the
+// channel they were asked in and never leaking into #main.
+func TestCommandsWorkInEveryChannel(t *testing.T) {
+	e := newEnv(t)
+	alice := keyed("a", "Alice")
+	e.login(alice)
+	e.chat(alice, "warmup") // spend the #main first-message reaction
+	e.h.reset()
+
+	e.chatIn("lounge", alice, "!time")
+	if len(e.h.said) != 0 || len(e.h.sayIn["lounge"]) != 1 {
+		t.Fatalf("!time in #lounge: main=%v lounge=%v", e.h.said, e.h.sayIn)
+	}
+
+	e.advance(time.Minute)
+	e.h.reset()
+	e.chatIn("lounge", alice, "@SysOp-Gus asdf qwerty")
+	if len(e.h.sayIn["lounge"]) != 1 || len(e.h.said) != 0 || !e.inPool("fallback", e.b.vars(alice), e.h.sayIn["lounge"][0]) {
+		t.Fatalf("addressed in #lounge: %v main=%v", e.h.sayIn, e.h.said)
+	}
+
+	// Ordinary chat in another channel is none of his business.
+	e.advance(time.Minute)
+	e.h.reset()
+	for _, line := range []string{"hello everyone", "has anyone seen the footy", "lol"} {
+		e.chatIn("lounge", alice, line)
+	}
+	if len(e.h.said)+len(e.h.sayIn["lounge"])+len(e.h.pms) != 0 {
+		t.Fatalf("Gus spoke during normal chat in #lounge: %v %v", e.h.said, e.h.sayIn)
+	}
+
+	// Chatting in another channel is not #main activity: no first-message
+	// reaction there, and it does not reset the idle timer.
+	bob := keyed("b", "Bob")
+	e.login(bob)
+	e.h.reset()
+	e.chatIn("lounge", bob, "my very first message")
+	if len(e.h.said)+len(e.h.sayIn["lounge"]) != 0 {
+		t.Fatalf("a first message in #lounge must not trigger the #main reaction: %v %v", e.h.said, e.h.sayIn)
+	}
+	if u, _ := e.b.st.user("SHA256:b"); u.Messages != 0 {
+		t.Fatal("messages in other channels must not be counted as #main activity")
+	}
+
+	// !tell still queues mail from a side channel.
+	carol := keyed("c", "Carol")
+	e.login(carol)
+	e.logoff(carol)
+	e.advance(time.Minute)
+	e.h.reset()
+	e.chatIn("lounge", alice, "!tell Carol hello from the lounge")
+	if len(e.h.sayIn["lounge"]) != 1 || !e.inPool("tell_stored", e.b.vars(alice, "target", "Carol"), e.h.sayIn["lounge"][0]) {
+		t.Fatalf("!tell in #lounge: %v", e.h.sayIn)
+	}
+}
+
+// Trivia is per channel: a question asked in one is not answered, scored or
+// revealed in another.
+func TestTriviaIsPerChannel(t *testing.T) {
+	e := newEnv(t)
+	a := keyed("a", "Alice")
+	e.login(a)
+	e.chat(a, "x")
+	e.h.reset()
+
+	e.chatIn("lounge", a, "!trivia")
+	q := e.b.trivia["lounge"]
+	if q == nil || e.b.trivia["main"] != nil || len(e.h.said) != 0 {
+		t.Fatalf("question should live in #lounge only: lounge=%v main=%v said=%v", q, e.b.trivia["main"], e.h.said)
+	}
+	answer := q.q.A[0]
+
+	e.advance(5 * time.Second)
+	e.h.reset()
+	e.chat(a, "!trivia "+answer) // the right answer, but in #main
+	if !e.inPool("trivia_none", e.b.vars(a), e.said()) || e.b.trivia["lounge"] == nil {
+		t.Fatalf("an answer in #main must not settle #lounge's question: %v", e.h.said)
+	}
+
+	e.advance(time.Minute)
+	e.h.reset()
+	e.chatIn("lounge", a, "!trivia "+answer)
+	if e.b.trivia["lounge"] != nil || len(e.h.sayIn["lounge"]) == 0 || len(e.h.said) != 0 {
+		t.Fatalf("answer in #lounge: lounge=%v main=%v", e.h.sayIn, e.h.said)
+	}
+	if top := e.b.st.topScores(5); len(top) != 1 || top[0].Nick != "Alice" {
+		t.Fatalf("score not recorded: %+v", top)
+	}
+
+	// Timeout reveals in the channel it was asked in.
+	e.advance(time.Minute)
+	e.chatIn("lounge", a, "!trivia")
+	e.advance(61 * time.Second)
+	e.h.reset()
+	e.b.Tick()
+	if len(e.h.sayIn["lounge"]) != 1 || len(e.h.said) != 0 || e.b.trivia["lounge"] != nil {
+		t.Fatalf("timeout reveal should be in #lounge: %v main=%v", e.h.sayIn, e.h.said)
 	}
 }

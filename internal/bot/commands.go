@@ -95,7 +95,7 @@ var commandHelp = []struct{ name, usage, help string }{
 
 // HelpLines is the section the server's /help shows for the bot's commands.
 func HelpLines(nick string) []string {
-	lines := []string{nick + " commands (type them in #main):"}
+	lines := []string{nick + " commands (they work in every channel):"}
 	for _, c := range commandHelp {
 		lines = append(lines, fmt.Sprintf("  %-22s %s", c.usage, c.help))
 	}
