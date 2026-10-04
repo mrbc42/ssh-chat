@@ -213,3 +213,15 @@ func (s *Store) SetEntryMessage(ctx context.Context, channelID int64, text strin
 	_, err := s.db.ExecContext(ctx, `UPDATE channels SET entry_message = ? WHERE id = ?`, text, channelID)
 	return err
 }
+
+// RenameChannel changes a channel's name. ErrChannelExists if another channel
+// already has it (names are unique, case-insensitively).
+func (s *Store) RenameChannel(ctx context.Context, id int64, newName string) error {
+	if other, ok, err := s.GetChannelByName(ctx, newName); err != nil {
+		return err
+	} else if ok && other.ID != id {
+		return ErrChannelExists
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE channels SET name = ? WHERE id = ? AND is_main = 0`, newName, id)
+	return err
+}

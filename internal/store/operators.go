@@ -40,3 +40,26 @@ func (s *Store) RemoveOperator(ctx context.Context, channelID int64, fp string) 
 		channelID, fp, RoleOwner)
 	return err
 }
+
+// SetOwner makes fp the one owner of the channel: any other owner is demoted to
+// operator (so the previous owner keeps their moderation rights, just not the
+// ownership).
+func (s *Store) SetOwner(ctx context.Context, channelID int64, fp string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE operators SET role = ? WHERE channel_id = ? AND role = ? AND fp != ?`,
+		RoleOperator, channelID, RoleOwner, fp); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO operators (channel_id, fp, role, granted_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(channel_id, fp) DO UPDATE SET role = excluded.role`,
+		channelID, fp, RoleOwner, time.Now().Unix()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

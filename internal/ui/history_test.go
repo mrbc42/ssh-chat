@@ -2,6 +2,7 @@ package ui
 
 import (
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mrbc42/ssh-chat/internal/hub"
+	"github.com/mrbc42/ssh-chat/internal/store"
 	"github.com/muesli/termenv"
 )
 
@@ -529,5 +531,30 @@ func TestMotdIsDrawnAsARedBoxWithTheLabelInTheTopBorder(t *testing.T) {
 	short := renderRows(hub.Line{Kind: hub.KindMotd, Body: "Welcome"}, sty, 100)
 	if len(short) != 3 || !strings.Contains(ansiStrip(short[1]), "Welcome") {
 		t.Fatalf("short message: %q", short)
+	}
+}
+
+// A channel renamed under the user must update their status bar at once.
+func TestRoomInfoOutboundRefreshesTheStatusBar(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "r.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	h, _ := hub.NewHub(st, nil)
+	r := lipgloss.NewRenderer(io.Discard)
+	m := Model{h: h, sty: newStyles(r), textinput: textinput.New(), width: 100, height: 20,
+		roomInfo: hub.RoomInfo{Name: "bad-name", Members: 3}}
+	m.refreshBar()
+	if !strings.Contains(ansiStrip(m.bar), "#bad-name") {
+		t.Fatalf("setup: %q", ansiStrip(m.bar))
+	}
+	next, _ := m.Update(outboundMsg{ob: hub.Outbound{RoomInfo: &hub.RoomInfo{Name: "friendly", Members: 3}}})
+	m = next.(Model)
+	if bar := ansiStrip(m.bar); !strings.Contains(bar, "#friendly") || strings.Contains(bar, "bad-name") {
+		t.Fatalf("status bar did not follow the rename: %q", bar)
+	}
+	if len(m.lines) != 0 {
+		t.Fatal("a status refresh must not touch the scrollback")
 	}
 }

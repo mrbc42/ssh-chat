@@ -126,7 +126,7 @@ func TestDelroomAndExpiry(t *testing.T) {
 
 	_ = info(t, h, admin, "/create doomed")
 	time.Sleep(200 * time.Millisecond)
-	if r := admin.CurrentRoom(); r == nil || r.Name != "doomed" {
+	if r := admin.CurrentRoom(); r == nil || r.Name() != "doomed" {
 		t.Fatalf("not in doomed: %+v", r)
 	}
 	if got := info(t, h, admin, "/delroom main"); !strings.Contains(got, "cannot be deleted") {
@@ -559,5 +559,209 @@ func TestAdminCanSetEntryMessageOfPermanentChannel(t *testing.T) {
 	room, _ := h.GetLoadedRoom("help")
 	if got := room.Info().Entry; got != "Ask your questions here" {
 		t.Fatalf("admin could not set the permanent channel's entry message: %q", got)
+	}
+}
+
+func roleOf(t *testing.T, st *store.Store, ch string, fp string) string {
+	t.Helper()
+	c, ok, err := st.GetChannelByName(context.Background(), ch)
+	if err != nil || !ok {
+		t.Fatalf("channel %s: ok=%v err=%v", ch, ok, err)
+	}
+	role, _, _ := st.IsOwnerOrOp(context.Background(), c.ID, fp)
+	return role
+}
+
+func TestAdminTakeoverAndSetOwner(t *testing.T) {
+	h, st := adminHub(t)
+	creator := NewSession("SHA256:creator", "1.1.1.1", "creator")
+	other := NewSession("SHA256:other", "2.2.2.2", "other")
+	keyless := NewSession("anon-1234", "3.3.3.3", "ghost")
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	for _, s := range []*Session{creator, other, keyless, admin} {
+		h.Main().Join(s)
+	}
+	time.Sleep(100 * time.Millisecond)
+	_ = info(t, h, creator, "/create lounge")
+	time.Sleep(200 * time.Millisecond)
+	for _, s := range []*Session{other, keyless, admin} {
+		_ = info(t, h, s, "/join lounge")
+	}
+	time.Sleep(300 * time.Millisecond)
+	if roleOf(t, st, "lounge", "SHA256:creator") != store.RoleOwner {
+		t.Fatal("setup: creator should own #lounge")
+	}
+
+	// Not for ordinary users, and not in #main.
+	if got := info(t, h, other, "/takeover"); !strings.Contains(got, "Only a server administrator") {
+		t.Fatalf("a non-admin must not take over: %q", got)
+	}
+	if got := info(t, h, other, "/setowner other"); !strings.Contains(got, "Only a server administrator") {
+		t.Fatalf("a non-admin must not assign an owner: %q", got)
+	}
+	adminInMain := NewSession("SHA256:admin", "9.9.9.8", "boss2")
+	h.Main().Join(adminInMain)
+	if got := info(t, h, adminInMain, "/takeover"); !strings.Contains(got, "#main has no owner") {
+		t.Fatalf("takeover in #main: %q", got)
+	}
+
+	// An admin assigns a new owner; the old owner keeps operator rights.
+	_ = info(t, h, admin, "/setowner other")
+	time.Sleep(200 * time.Millisecond)
+	if roleOf(t, st, "lounge", "SHA256:other") != store.RoleOwner || roleOf(t, st, "lounge", "SHA256:creator") != store.RoleOperator {
+		t.Fatalf("owner=%q (want owner), old=%q (want operator)", roleOf(t, st, "lounge", "SHA256:other"), roleOf(t, st, "lounge", "SHA256:creator"))
+	}
+	// ...and the new owner really has the powers.
+	if got := info(t, h, other, "/topic Now run by other"); strings.Contains(got, "must be") {
+		t.Fatalf("the new owner should be able to set the topic: %q", got)
+	}
+	if got := helpText(t, h, other); !strings.Contains(got, "/op ") {
+		t.Fatalf("the new owner should see owner-only commands:\n%s", got)
+	}
+
+	// Keyless users can't own channels; unknown users are reported.
+	if got := info(t, h, admin, "/setowner ghost"); !strings.Contains(got, "without an SSH key") {
+		t.Fatalf("keyless owner: %q", got)
+	}
+	if got := info(t, h, admin, "/setowner nobody-here"); !strings.Contains(got, "No such user") {
+		t.Fatalf("unknown owner: %q", got)
+	}
+
+	// Takeover: the admin becomes owner, the previous owner is demoted.
+	_ = info(t, h, admin, "/takeover")
+	time.Sleep(200 * time.Millisecond)
+	if roleOf(t, st, "lounge", "SHA256:admin") != store.RoleOwner || roleOf(t, st, "lounge", "SHA256:other") != store.RoleOperator {
+		t.Fatal("takeover should make the admin the only owner")
+	}
+	owners := 0
+	for _, fp := range []string{"SHA256:creator", "SHA256:other", "SHA256:admin"} {
+		if roleOf(t, st, "lounge", fp) == store.RoleOwner {
+			owners++
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("there must be exactly one owner, found %d", owners)
+	}
+}
+
+func TestAdminsCanEnterLockedAndBannedChannels(t *testing.T) {
+	h, _ := adminHub(t)
+	owner := NewSession("SHA256:owner", "1.1.1.1", "owner")
+	plain := NewSession("SHA256:plain", "2.2.2.2", "plain")
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	for _, s := range []*Session{owner, plain, admin} {
+		h.Main().Join(s)
+	}
+	time.Sleep(100 * time.Millisecond)
+	_ = info(t, h, owner, "/create vault")
+	time.Sleep(200 * time.Millisecond)
+	_ = info(t, h, owner, "/lock")
+	time.Sleep(200 * time.Millisecond)
+	if got := info(t, h, plain, "/join vault"); !strings.Contains(got, "locked") {
+		t.Fatalf("a plain user must not enter a locked channel: %q", got)
+	}
+	_ = info(t, h, admin, "/join vault")
+	time.Sleep(300 * time.Millisecond)
+	if r := admin.CurrentRoom(); r == nil || r.Name() != "vault" {
+		t.Fatalf("an admin should be able to enter a locked channel, is in %v", r)
+	}
+}
+
+func TestAdminRenameRoom(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	creator := NewSession("SHA256:creator", "1.1.1.1", "creator")
+	member := NewSession("SHA256:member", "2.2.2.2", "member")
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	for _, s := range []*Session{creator, member, admin} {
+		h.Main().Join(s)
+	}
+	time.Sleep(100 * time.Millisecond)
+	_ = info(t, h, creator, "/create bad-name")
+	time.Sleep(200 * time.Millisecond)
+	_ = info(t, h, member, "/join bad-name")
+	_ = info(t, h, admin, "/join bad-name")
+	time.Sleep(300 * time.Millisecond)
+	drain(member)
+
+	// Admin only, and the usual name rules.
+	if got := info(t, h, member, "/renameroom nicer"); !strings.Contains(got, "Only a server administrator") {
+		t.Fatalf("a non-admin must not rename: %q", got)
+	}
+	if got := info(t, h, admin, "/renameroom bad name!"); strings.Contains(got, "Renamed") {
+		t.Fatalf("an invalid name must be rejected: %q", got)
+	}
+	_, _ = st.CreateChannel(ctx, "taken", "SHA256:x")
+	if got := info(t, h, admin, "/renameroom taken"); !strings.Contains(got, "already exists") {
+		t.Fatalf("renaming onto an existing channel: %q", got)
+	}
+
+	// The rename: stored, live room re-registered, members told and refreshed.
+	drain(member)
+	if got := info(t, h, admin, "/renameroom friendly"); !strings.Contains(got, "Renamed #bad-name to #friendly") {
+		t.Fatalf("rename: %q", got)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if _, ok, _ := st.GetChannelByName(ctx, "bad-name"); ok {
+		t.Fatal("the old name still exists in the database")
+	}
+	ch, ok, _ := st.GetChannelByName(ctx, "friendly")
+	if !ok {
+		t.Fatal("the new name is not in the database")
+	}
+	room, ok := h.GetLoadedRoom("friendly")
+	if !ok || room.Name() != "friendly" {
+		t.Fatalf("the live room should be registered under the new name: %v", room)
+	}
+	if _, stale := h.GetLoadedRoom("bad-name"); stale {
+		t.Fatal("the old name must no longer resolve to the room")
+	}
+	if member.CurrentRoom() != room || len(room.Who()) != 3 {
+		t.Fatalf("members should still be in the same room after a rename: %v", room.Who())
+	}
+	sawNotice, sawRefresh := false, false
+	for {
+		select {
+		case o := <-member.Outbox:
+			if o.Line != nil && strings.Contains(o.Line.Body, "was renamed to #friendly by admin boss") {
+				sawNotice = true
+			}
+			if o.RoomInfo != nil && o.RoomInfo.Name == "friendly" {
+				sawRefresh = true
+			}
+			continue
+		default:
+		}
+		break
+	}
+	if !sawNotice || !sawRefresh {
+		t.Fatalf("members must be told and have their status bar refreshed: notice=%v refresh=%v", sawNotice, sawRefresh)
+	}
+	// Ownership and history stay with the channel (same id).
+	if role, _, _ := st.IsOwnerOrOp(ctx, ch.ID, "SHA256:creator"); role != store.RoleOwner {
+		t.Fatal("the owner must survive a rename")
+	}
+	// The owner's commands work under the new name.
+	if got := info(t, h, creator, "/topic after the rename"); strings.Contains(got, "must be") {
+		t.Fatalf("owner commands should still work: %q", got)
+	}
+
+	// Rename a channel nobody is in, from #main, by explicit old name.
+	_, _ = st.CreateChannel(ctx, "idle-one", "SHA256:z")
+	adminMain := NewSession("SHA256:admin", "9.9.9.7", "boss3")
+	h.Main().Join(adminMain)
+	if got := info(t, h, adminMain, "/renameroom #idle-one quiet-one"); !strings.Contains(got, "Renamed #idle-one to #quiet-one") {
+		t.Fatalf("rename by name: %q", got)
+	}
+	if _, ok, _ := st.GetChannelByName(ctx, "quiet-one"); !ok {
+		t.Fatal("unloaded channel was not renamed")
+	}
+	// #main and permanent channels cannot be renamed.
+	if got := info(t, h, adminMain, "/renameroom main primary"); !strings.Contains(got, "cannot be renamed") {
+		t.Fatalf("renaming #main: %q", got)
+	}
+	_ = h.EnsurePermanent(ctx, []string{"keepme"})
+	if got := info(t, h, adminMain, "/renameroom keepme dropme"); !strings.Contains(got, "permanent") {
+		t.Fatalf("renaming a permanent channel: %q", got)
 	}
 }

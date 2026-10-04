@@ -354,6 +354,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ob.Clear {
 			m.lines = nil
 			m.layout()
+		} else if ob.RoomInfo != nil {
+			m.roomInfo = *ob.RoomInfo // e.g. the channel was renamed under us
+			m.refreshBar()
 		} else if ob.SwitchRoom != nil {
 			statSwitchRooms.Add(1)
 			m.historyDone = false

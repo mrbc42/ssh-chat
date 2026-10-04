@@ -44,6 +44,11 @@ type Outbound struct {
 	// Clear, when true, tells the UI to empty its scrollback pane.
 	Clear bool
 
+	// RoomInfo, when non-nil, refreshes the UI's status bar (name, topic, lock)
+	// without touching the scrollback; sent when the room changes under you,
+	// e.g. an admin renames it.
+	RoomInfo *RoomInfo
+
 	// Disconnect, when true, tells the UI to close the session.
 	Disconnect bool
 }
@@ -133,6 +138,10 @@ type evSetAnnounce struct {
 	announce bool
 	by       *Session
 }
+type evRename struct {
+	newName string
+	by      *Session
+}
 type evSetEntry struct {
 	text string
 	by   *Session
@@ -164,6 +173,7 @@ func (evSystem) isRoomEvent()        {}
 func (evForceRemove) isRoomEvent()   {}
 func (evSetLocked) isRoomEvent()     {}
 func (evSetAnnounce) isRoomEvent()   {}
+func (evRename) isRoomEvent()        {}
 func (evSetEntry) isRoomEvent()      {}
 func (evSetTopic) isRoomEvent()      {}
 func (evWho) isRoomEvent()           {}

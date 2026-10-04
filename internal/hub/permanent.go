@@ -53,7 +53,7 @@ func (h *Hub) effectiveRole(ctx context.Context, sess *Session, room *Room) (str
 	if err != nil {
 		return "", err
 	}
-	if role == "" && h.IsAdmin(sess.FP) && h.IsPermanent(room.Name) {
+	if role == "" && h.IsAdmin(sess.FP) && h.IsPermanent(room.Name()) {
 		return store.RoleOwner, nil
 	}
 	return role, nil

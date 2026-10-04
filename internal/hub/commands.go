@@ -191,6 +191,18 @@ func init() {
 		AdminOnly: true, Fn: cmdDelroom,
 	})
 	register(&Command{
+		Name: "takeover", Usage: "/takeover", Help: "(admin) Become the owner of the current channel (e.g. its creator is gone).",
+		AdminOnly: true, Fn: cmdTakeover,
+	})
+	register(&Command{
+		Name: "setowner", Usage: "/setowner <user>", Help: "(admin) Make a user the owner of the current channel; the old owner becomes an operator.",
+		AdminOnly: true, Fn: cmdSetOwner,
+	})
+	register(&Command{
+		Name: "renameroom", Usage: "/renameroom [old] <new>", Help: "(admin) Rename the current channel (or the named one).",
+		AdminOnly: true, Fn: cmdRenameRoom,
+	})
+	register(&Command{
 		Name: "adminlog", Usage: "/adminlog [count]", Help: "(admin) Show recent /admin reports (default 10, max 50).",
 		AdminOnly: true, Fn: cmdAdminLog,
 	})
@@ -520,7 +532,9 @@ func joinByName(c *CmdCtx, name string, justCreated bool) []string {
 		justCreated = true
 	}
 
-	if !justCreated {
+	// Server admins can enter any channel, locked or banned, so they can reach
+	// one to take it over or moderate it.
+	if !justCreated && !c.Hub.IsAdmin(c.Sess.FP) {
 		banned, err := c.Store.IsBanned(c.ctx, ch.ID, c.Sess.FP, c.Sess.IP)
 		if err != nil {
 			return []string{"Internal error checking ban list."}
@@ -571,7 +585,7 @@ func cmdWho(c *CmdCtx, _ []string) []string {
 	}
 	names := room.Who()
 	sort.Strings(names)
-	lines := []string{fmt.Sprintf("Users in #%s:", room.Name)}
+	lines := []string{fmt.Sprintf("Users in #%s:", room.Name())}
 	for _, n := range names {
 		lines = append(lines, "  "+n)
 	}
@@ -618,14 +632,14 @@ func cmdKick(c *CmdCtx, args []string) []string {
 	ownerRole, _, _ := c.Store.IsOwnerOrOp(c.ctx, room.ID, c.Sess.FP)
 	target := findLiveMember(room, nick)
 	if target == nil {
-		return []string{fmt.Sprintf("%s is not in #%s.", nick, room.Name)}
+		return []string{fmt.Sprintf("%s is not in #%s.", nick, room.Name())}
 	}
 	targetRole, _, _ := c.Store.IsOwnerOrOp(c.ctx, room.ID, target.FP)
 	if targetRole == store.RoleOwner && ownerRole != store.RoleOwner {
 		return []string{"Operators cannot kick the channel owner."}
 	}
 	broadcastText := fmt.Sprintf("*** %s was kicked by %s ***", target.Nick(), c.Sess.Nick())
-	targetText := fmt.Sprintf("You were kicked from #%s by %s.", room.Name, c.Sess.Nick())
+	targetText := fmt.Sprintf("You were kicked from #%s by %s.", room.Name(), c.Sess.Nick())
 	room.Send(evForceRemove{target: target, broadcastText: broadcastText, targetText: targetText})
 	return nil
 }
@@ -664,7 +678,7 @@ func cmdBan(c *CmdCtx, args []string) []string {
 
 	if target != nil {
 		broadcastText := fmt.Sprintf("*** %s was banned by %s ***", target.Nick(), c.Sess.Nick())
-		targetText := fmt.Sprintf("You were banned from #%s by %s.", room.Name, c.Sess.Nick())
+		targetText := fmt.Sprintf("You were banned from #%s by %s.", room.Name(), c.Sess.Nick())
 		room.Send(evForceRemove{target: target, broadcastText: broadcastText, targetText: targetText})
 	} else {
 		room.Send(evSystem{text: fmt.Sprintf("*** %s was banned by %s ***", nick, c.Sess.Nick()), persist: true})
@@ -757,7 +771,7 @@ func cmdAdmin(c *CmdCtx, args []string) []string {
 	room := c.Sess.CurrentRoom()
 	roomName := store.MainChannelName
 	if room != nil {
-		roomName = room.Name
+		roomName = room.Name()
 	}
 	delivered := c.Hub.NotifyAdmins(fmt.Sprintf("[ADMIN ALERT] %s in #%s: %s", c.Sess.Nick(), roomName, msg))
 	_ = c.Store.AddAdminAlert(c.ctx, store.AdminAlert{
@@ -1186,9 +1200,9 @@ func cmdWelcome(c *CmdCtx, args []string) []string {
 	case text == "":
 		cur := room.Info().Entry
 		if cur == "" {
-			return []string{"No entry message is set for #" + room.Name + ". Usage: /welcome <text>, or /welcome clear."}
+			return []string{"No entry message is set for #" + room.Name() + ". Usage: /welcome <text>, or /welcome clear."}
 		}
-		return []string{"Entry message for #" + room.Name + ": " + cur, "Change it with /welcome <text>, or remove it with /welcome clear."}
+		return []string{"Entry message for #" + room.Name() + ": " + cur, "Change it with /welcome <text>, or remove it with /welcome clear."}
 	case strings.EqualFold(text, "clear"):
 		room.Send(evSetEntry{text: "", by: c.Sess})
 	default:
@@ -1224,4 +1238,88 @@ func cleanLine(s string, max int) string {
 		}
 	}
 	return b.String()
+}
+
+// currentChannel is the non-#main channel the caller is in, or an error message.
+func currentChannel(c *CmdCtx) (*Room, string) {
+	room := c.Sess.CurrentRoom()
+	if room == nil || room == c.Hub.Main() {
+		return nil, "Join the channel first; #main has no owner."
+	}
+	return room, ""
+}
+
+func cmdTakeover(c *CmdCtx, _ []string) []string {
+	if msg := requireAdmin(c); msg != nil {
+		return msg
+	}
+	room, bad := currentChannel(c)
+	if room == nil {
+		return []string{bad}
+	}
+	if err := c.Hub.AssignOwner(c.ctx, room, c.Sess.FP, c.Sess.Nick(), c.Sess); err != nil {
+		return []string{"Failed to take over the channel."}
+	}
+	return nil
+}
+
+func cmdSetOwner(c *CmdCtx, args []string) []string {
+	if msg := requireAdmin(c); msg != nil {
+		return msg
+	}
+	pos := posArgs(args)
+	if len(pos) != 1 {
+		return []string{"Usage: /setowner <user>"}
+	}
+	room, bad := currentChannel(c)
+	if room == nil {
+		return []string{bad}
+	}
+	nick := pos[0]
+	var fp string
+	if target := findLiveMember(room, nick); target != nil {
+		fp, nick = target.FP, target.Nick()
+	} else if f, ok, err := c.Store.FindFingerprintByNickname(c.ctx, nick); err == nil && ok {
+		fp = f
+	} else {
+		return []string{fmt.Sprintf("No such user %q.", nick)}
+	}
+	if strings.HasPrefix(fp, "anon-") {
+		return []string{"A user without an SSH key can't own a channel: their identity changes every time they connect."}
+	}
+	if err := c.Hub.AssignOwner(c.ctx, room, fp, nick, c.Sess); err != nil {
+		return []string{"Failed to assign the owner."}
+	}
+	return nil
+}
+
+func cmdRenameRoom(c *CmdCtx, args []string) []string {
+	if msg := requireAdmin(c); msg != nil {
+		return msg
+	}
+	pos := posArgs(args)
+	var oldName, newName string
+	switch len(pos) {
+	case 1:
+		room, bad := currentChannel(c)
+		if room == nil {
+			return []string{bad}
+		}
+		oldName, newName = room.Name(), pos[0]
+	case 2:
+		oldName, newName = strings.TrimPrefix(pos[0], "#"), pos[1]
+	default:
+		return []string{"Usage: /renameroom <new>  (in the channel)  or  /renameroom <old> <new>"}
+	}
+	newName = strings.TrimPrefix(newName, "#")
+	switch err := c.Hub.RenameRoom(c.ctx, oldName, newName, c.Sess); {
+	case err == nil:
+		return []string{fmt.Sprintf("Renamed #%s to #%s.", oldName, newName)}
+	case errors.Is(err, store.ErrChannelNotFound):
+		return []string{fmt.Sprintf("No such channel #%s.", oldName)}
+	case errors.Is(err, store.ErrChannelExists):
+		return []string{fmt.Sprintf("A channel called #%s already exists.", newName)}
+	default:
+		return []string{err.Error()}
+	}
 }

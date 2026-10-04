@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mrbc42/ssh-chat/internal/store"
@@ -28,7 +29,7 @@ type Room struct {
 	store *store.Store
 
 	ID   int64
-	Name string
+	name atomic.Value // string; changes when an admin renames the channel
 
 	events chan roomEvent
 
@@ -48,7 +49,6 @@ func newRoom(h *Hub, st *store.Store, ch store.Channel) *Room {
 		hub:      h,
 		store:    st,
 		ID:       ch.ID,
-		Name:     ch.Name,
 		events:   make(chan roomEvent, 256),
 		limiter:  newTokenBucket(roomBurst, roomPerSecond),
 		members:  make(map[*Session]struct{}),
@@ -57,9 +57,13 @@ func newRoom(h *Hub, st *store.Store, ch store.Channel) *Room {
 		topic:    ch.Topic,
 		entry:    ch.EntryMessage,
 	}
+	r.name.Store(ch.Name)
 	go r.run()
 	return r
 }
+
+// Name is the channel's current name (it can change at runtime via /renameroom).
+func (r *Room) Name() string { return r.name.Load().(string) }
 
 // Send enqueues an event for the room's actor loop. It blocks if the actor
 // is backed up (the queue is generously buffered; this is not on the
@@ -139,7 +143,7 @@ func (r *Room) run() {
 			if e.locked {
 				state = "locked"
 			}
-			r.broadcastSystem(ctx, fmt.Sprintf("*** #%s was %s by %s ***", r.Name, state, e.by.Nick()), true)
+			r.broadcastSystem(ctx, fmt.Sprintf("*** #%s was %s by %s ***", r.Name(), state, e.by.Nick()), true)
 		case evSetAnnounce:
 			r.announce = e.announce
 			_ = r.store.SetAnnounce(ctx, r.ID, e.announce)
@@ -147,7 +151,16 @@ func (r *Room) run() {
 			if e.announce {
 				state = "on"
 			}
-			r.broadcastSystem(ctx, fmt.Sprintf("*** join/leave announcements in #%s turned %s by %s ***", r.Name, state, e.by.Nick()), true)
+			r.broadcastSystem(ctx, fmt.Sprintf("*** join/leave announcements in #%s turned %s by %s ***", r.Name(), state, e.by.Nick()), true)
+		case evRename:
+			old := r.Name()
+			r.name.Store(e.newName)
+			r.broadcastSystem(ctx, fmt.Sprintf("*** #%s was renamed to #%s by admin %s ***", old, e.newName, e.by.Nick()), true)
+			info := RoomInfo{Name: e.newName, Topic: r.topic, Locked: r.locked, Announce: r.announce, Members: len(r.members), Entry: r.entry}
+			for sess := range r.members { // refresh everyone's status bar now
+				i := info
+				sess.send(Outbound{RoomInfo: &i})
+			}
 		case evSetEntry:
 			r.entry = e.text
 			_ = r.store.SetEntryMessage(ctx, r.ID, e.text)
@@ -168,7 +181,7 @@ func (r *Room) run() {
 			e.respond <- names
 		case evSnapshot:
 			e.respond <- RoomInfo{
-				Name:     r.Name,
+				Name:     r.Name(),
 				Topic:    r.topic,
 				Locked:   r.locked,
 				Announce: r.announce,
@@ -234,11 +247,11 @@ func (r *Room) handleJoin(ctx context.Context, sess *Session) {
 	sess.setCurrentRoom(r)
 
 	sess.send(Outbound{
-		SwitchRoom: &RoomInfo{Name: r.Name, Topic: r.topic, Locked: r.locked, Announce: r.announce, Members: len(r.members)},
+		SwitchRoom: &RoomInfo{Name: r.Name(), Topic: r.topic, Locked: r.locked, Announce: r.announce, Members: len(r.members)},
 		Scrollback: lines,
 	})
 	if r.entry != "" { // the channel's welcome, for this joiner only
-		line := infoLine(fmt.Sprintf("Welcome to #%s: %s", r.Name, r.entry))
+		line := infoLine(fmt.Sprintf("Welcome to #%s: %s", r.Name(), r.entry))
 		sess.send(Outbound{Line: &line})
 	}
 	if sess.joinNotice != "" {
@@ -248,12 +261,12 @@ func (r *Room) handleJoin(ctx context.Context, sess *Session) {
 	}
 
 	if r.announce {
-		text := fmt.Sprintf("*** %s has joined #%s ***", sess.Nick(), r.Name)
+		text := fmt.Sprintf("*** %s has joined #%s ***", sess.Nick(), r.Name())
 		r.persistSystem(ctx, text)
 		r.broadcastExcept(sess, systemLine(text))
 	}
 	if o := r.hub.observer; o != nil {
-		o.OnJoin(r.Name, sess, sess.markJoined())
+		o.OnJoin(r.Name(), sess, sess.markJoined())
 	}
 }
 
@@ -263,7 +276,7 @@ func (r *Room) handlePart(ctx context.Context, sess *Session, reason partReason)
 	}
 	delete(r.members, sess)
 	if o := r.hub.observer; o != nil {
-		defer o.OnPart(r.Name, sess, reason == partReasonDisconnect)
+		defer o.OnPart(r.Name(), sess, reason == partReasonDisconnect)
 	}
 	if !r.announce {
 		return
@@ -275,7 +288,7 @@ func (r *Room) handlePart(ctx context.Context, sess *Session, reason partReason)
 	case partReasonDisconnect:
 		text = fmt.Sprintf("*** %s has logged off ***", sess.Nick())
 	default:
-		text = fmt.Sprintf("*** %s has left #%s ***", sess.Nick(), r.Name)
+		text = fmt.Sprintf("*** %s has left #%s ***", sess.Nick(), r.Name())
 	}
 	r.persistSystem(ctx, text)
 	r.broadcastExcept(sess, systemLine(text))
@@ -287,7 +300,7 @@ func (r *Room) roomAllows(sess *Session) bool {
 	if r.limiter.allow() {
 		return true
 	}
-	line := errorLine(fmt.Sprintf("#%s is receiving too many messages right now; yours was dropped.", r.Name))
+	line := errorLine(fmt.Sprintf("#%s is receiving too many messages right now; yours was dropped.", r.Name()))
 	sess.send(Outbound{Line: &line})
 	return false
 }
@@ -300,7 +313,7 @@ func (r *Room) handleChat(ctx context.Context, sess *Session, body string) {
 	r.store.AppendMessageAsync(m)
 	r.broadcastAll(chatLine(sess.Nick(), body))
 	if o := r.hub.observer; o != nil {
-		o.OnChat(r.Name, sess, body, false)
+		o.OnChat(r.Name(), sess, body, false)
 	}
 }
 
@@ -312,7 +325,7 @@ func (r *Room) handleShutdown(done chan struct{}) {
 			delete(r.members, sess)
 			continue
 		}
-		line := infoLine(fmt.Sprintf("#%s was deleted. Moving you to #main.", r.Name))
+		line := infoLine(fmt.Sprintf("#%s was deleted. Moving you to #main.", r.Name()))
 		sess.send(Outbound{Line: &line})
 		delete(r.members, sess)
 		sess.setCurrentRoom(nil)
@@ -329,7 +342,7 @@ func (r *Room) handleAction(ctx context.Context, sess *Session, body string) {
 	r.store.AppendMessageAsync(m)
 	r.broadcastAll(actionLine(sess.Nick(), body))
 	if o := r.hub.observer; o != nil {
-		o.OnChat(r.Name, sess, body, true)
+		o.OnChat(r.Name(), sess, body, true)
 	}
 }
 
