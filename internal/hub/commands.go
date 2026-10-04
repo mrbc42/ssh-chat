@@ -34,6 +34,7 @@ type Command struct {
 	NeedsOp   bool // owner or operator of the current room required
 	OwnerOnly bool // owner of the current room required
 	AdminOnly bool // server administrator required (hidden from /help for everyone else)
+	NeedsBot  bool // only listed in /help while the bot is running
 	Fn        func(c *CmdCtx, args []string) []string
 }
 
@@ -197,6 +198,14 @@ func init() {
 		Fn: cmdUIOnly,
 	})
 	register(&Command{
+		Name: "gus", Usage: "/gus", Help: "List SysOp-Gus's !commands (say them in #main).", NeedsBot: true,
+		Fn: cmdGus,
+	})
+	register(&Command{
+		Name: "keys", Usage: "/keys", Help: "List keyboard and mouse shortcuts (scrolling, history, editing).",
+		Fn: cmdUIOnly,
+	})
+	register(&Command{
 		Name: "mouse", Usage: "/mouse", Help: "Toggle mouse-wheel scrolling (turn it off to select text with the mouse).",
 		Fn: cmdUIOnly,
 	})
@@ -348,6 +357,9 @@ func posArgs(args []string) []string {
 // what the caller can actually do: admin commands for admins, and
 // operator/owner commands only while in a channel where they hold that role.
 func canUse(c *CmdCtx, cmd *Command) bool {
+	if cmd.NeedsBot && len(c.Hub.botHelp) == 0 {
+		return false
+	}
 	if cmd.AdminOnly {
 		return c.Hub.IsAdmin(c.Sess.FP)
 	}
@@ -384,7 +396,7 @@ func cmdHelp(c *CmdCtx, _ []string) []string {
 		}
 		lines = append(lines, fmt.Sprintf("  %-22s %s", cmd.Usage, cmd.Help))
 	}
-	return append(lines, c.Hub.helpExtra...)
+	return lines
 }
 
 func cmdNick(c *CmdCtx, args []string) []string {
@@ -1145,4 +1157,12 @@ func checkCanCreate(c *CmdCtx) string {
 // screen); reaching the hub means the caller has no window.
 func cmdUIOnly(_ *CmdCtx, _ []string) []string {
 	return []string{"That command only works in the chat window."}
+}
+
+// cmdGus lists the bot's !commands (kept out of /help to keep that short).
+func cmdGus(c *CmdCtx, _ []string) []string {
+	if len(c.Hub.botHelp) == 0 {
+		return []string{"SysOp-Gus is not running on this server."}
+	}
+	return c.Hub.botHelp
 }

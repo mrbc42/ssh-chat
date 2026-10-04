@@ -293,19 +293,44 @@ func TestHelpListsOnlyUsableCommands(t *testing.T) {
 	}
 }
 
-func TestHelpIncludesExtraSectionOnlyWhenSet(t *testing.T) {
+func TestHelpStaysShortAndGusHasItsOwnMenu(t *testing.T) {
 	h, _ := adminHub(t)
 	s := NewSession("SHA256:u", "", "plain")
 	h.Main().Join(s)
-	if got := helpText(t, h, s); strings.Contains(got, "!tell") {
-		t.Fatalf("no extra section expected before SetHelpExtra:\n%s", got)
+
+	// No bot: /gus is not advertised in /help, and says so if typed anyway.
+	if got := helpText(t, h, s); strings.Contains(got, "/gus") {
+		t.Fatalf("/gus must be hidden from /help while no bot runs:\n%s", got)
 	}
-	h.SetHelpExtra([]string{"Gus commands (type them in #main):", "  !tell <user> <message>  Leave a message"})
+	if got := info(t, h, s, "/gus"); !strings.Contains(got, "not running") {
+		t.Fatalf("/gus with no bot: %q", got)
+	}
+
+	h.SetBotHelp([]string{"Gus commands (type them in #main):", "  !tell <user> <message>  Leave a message"})
 	got := helpText(t, h, s)
-	if !strings.Contains(got, "Gus commands") || !strings.Contains(got, "!tell <user> <message>") {
-		t.Fatalf("extra section missing from /help:\n%s", got)
+	if strings.Contains(got, "!tell") || strings.Contains(got, "Gus commands") {
+		t.Fatalf("/help must not carry the bot's commands any more:\n%s", got)
 	}
-	if strings.Index(got, "/quit") > strings.Index(got, "Gus commands") {
-		t.Fatalf("the bot section should come after the slash commands:\n%s", got)
+	for _, want := range []string{"/gus", "/keys"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("/help should point at %s:\n%s", want, got)
+		}
+	}
+	drain(s)
+	HandleInput(context.Background(), h, s, "/gus")
+	var out strings.Builder
+	for {
+		select {
+		case o := <-s.Outbox:
+			if o.Line != nil && o.Line.Kind == KindInfo {
+				out.WriteString(o.Line.Body + "\n")
+			}
+			continue
+		case <-time.After(400 * time.Millisecond):
+		}
+		break
+	}
+	if !strings.Contains(out.String(), "Gus commands") || !strings.Contains(out.String(), "!tell <user> <message>") {
+		t.Fatalf("/gus should list the bot's commands:\n%s", out.String())
 	}
 }

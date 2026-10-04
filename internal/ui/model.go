@@ -467,6 +467,13 @@ func (m *Model) windowCommand(line string) (tea.Cmd, bool) {
 		}
 		m.loadHistory(n)
 		return nil, true
+	case "/keys":
+		now := time.Now()
+		for _, l := range keyHelpLines() {
+			l.Time = now
+			m.appendLine(l)
+		}
+		return nil, true
 	case "/mouse":
 		m.mouse = !m.mouse
 		state, cmd := "off — you can select text with the mouse again", tea.DisableMouse

@@ -406,3 +406,60 @@ func TestStayPutMarkerAndJumpKeys(t *testing.T) {
 		t.Fatal("wheel must be ignored while /mouse is off")
 	}
 }
+
+func TestKeysCommandListsTheShortcuts(t *testing.T) {
+	r := lipgloss.NewRenderer(io.Discard)
+	m := Model{sty: newStyles(r), textinput: textinput.New(), width: 100, height: 60, mouse: true}
+	if _, handled := m.windowCommand("/keys"); !handled {
+		t.Fatal("/keys must be handled by the chat window")
+	}
+	var all strings.Builder
+	for _, l := range m.lines {
+		all.WriteString(l.Body + "\n")
+	}
+	for _, want := range []string{"Keyboard and mouse shortcuts", "PgUp / PgDn", "Alt+Up / Alt+Down", "Mouse wheel", "Ctrl+Home / Ctrl+End", "/history [n]", "Ctrl+W", "Tab", "Ctrl+C"} {
+		if !strings.Contains(all.String(), want) {
+			t.Errorf("/keys output is missing %q", want)
+		}
+	}
+	// Every row has both the key and what it does.
+	for _, g := range keyHelp {
+		for _, r := range g.rows {
+			if r[0] == "" || r[1] == "" {
+				t.Errorf("incomplete row in %q: %v", g.heading, r)
+			}
+		}
+	}
+}
+
+// The scrolling keys /keys advertises must really do something.
+func TestAdvertisedScrollKeysWork(t *testing.T) {
+	r := lipgloss.NewRenderer(io.Discard)
+	base := Model{sty: newStyles(r), textinput: textinput.New(), width: 60, height: 10, mouse: true}
+	at := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 40; i++ {
+		base.appendLine(hub.Line{Time: at, Kind: hub.KindChat, Sender: "bob", Body: "msg " + strconv.Itoa(i)})
+	}
+	cases := map[string]struct {
+		key  tea.KeyMsg
+		from int // starting scroll
+		move bool
+	}{
+		"PgUp":        {tea.KeyMsg{Type: tea.KeyPgUp}, 0, true},
+		"PgDn":        {tea.KeyMsg{Type: tea.KeyPgDown}, 10, true},
+		"Alt+Up":      {tea.KeyMsg{Type: tea.KeyUp, Alt: true}, 0, true},
+		"Alt+Down":    {tea.KeyMsg{Type: tea.KeyDown, Alt: true}, 10, true},
+		"Ctrl+Home":   {tea.KeyMsg{Type: tea.KeyCtrlHome}, 0, true},
+		"Ctrl+End":    {tea.KeyMsg{Type: tea.KeyCtrlEnd}, 10, true},
+		"Home(empty)": {tea.KeyMsg{Type: tea.KeyHome}, 0, true},
+		"End(up)":     {tea.KeyMsg{Type: tea.KeyEnd}, 10, true},
+	}
+	for name, c := range cases {
+		m := base
+		m.scroll = c.from
+		next, _ := m.Update(c.key)
+		if got := next.(Model).scroll; got == c.from {
+			t.Errorf("%s did not scroll (scroll stayed %d)", name, got)
+		}
+	}
+}
