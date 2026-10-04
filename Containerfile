@@ -46,4 +46,12 @@ WORKDIR /data
 EXPOSE 2222
 
 ENTRYPOINT ["/usr/local/bin/ssh-chat"]
-CMD ["-addr", ":2222", "-db", "/data/chat.db", "-hostkey", "/data/hostkey", "-admins", "/data/admins.txt"]
+# Settings are environment variables (SSHCHAT_*), so a .env / env_file / quadlet
+# EnvironmentFile can change them without touching the launch command. These
+# are only the image's defaults; see .env.example for every option. (They are
+# deliberately not command-line flags here: flags would override the
+# environment.)
+ENV SSHCHAT_ADDR=:2222 \
+    SSHCHAT_DB=/data/chat.db \
+    SSHCHAT_HOSTKEY=/data/hostkey \
+    SSHCHAT_ADMINS=/data/admins.txt

@@ -1,0 +1,20 @@
+# Quadlet unit for a rootless podman host (~/.config/containers/systemd/ssh-chat.container).
+# Settings live in an env file, not on the command line; see ../.env.example.
+#   mkdir -p ~/.config/ssh-chat && cp .env.example ~/.config/ssh-chat/ssh-chat.env
+#   systemctl --user daemon-reload && systemctl --user restart ssh-chat
+[Unit]
+Description=ssh-chat
+
+[Container]
+Image=localhost/ssh-chat:latest
+ContainerName=ssh-chat
+PublishPort=2222:2222
+EnvironmentFile=%h/.config/ssh-chat/ssh-chat.env
+Environment=TZ=Australia/Brisbane
+Volume=ssh-chat-data:/data
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

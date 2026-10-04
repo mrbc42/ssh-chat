@@ -46,7 +46,17 @@ func main() {
 	pprofAddr := flag.String("pprof", "", "debug: serve runtime profiling (pprof) on this address, e.g. 127.0.0.1:6060; off by default")
 	flag.IntVar(&sshserver.MaxConnsPerIP, "max-conns-per-ip", sshserver.MaxConnsPerIP, "max concurrent connections from one IP")
 	flag.IntVar(&sshserver.MaxConnsPerMinute, "max-conns-per-min", sshserver.MaxConnsPerMinute, "max new connections per minute from one IP")
+	adminFPsFlag := flag.String("admin-fps", "", "comma-separated admin SSH key fingerprints (SHA256:...), in addition to the -admins file")
+	// Settings may come from SSHCHAT_* environment variables (e.g. a .env /
+	// env_file / quadlet EnvironmentFile); explicit flags still win.
+	fromEnv, err := applyEnv(flag.CommandLine, os.LookupEnv)
+	if err != nil {
+		log.Fatalf("bad environment setting: %v", err)
+	}
 	flag.Parse()
+	if len(fromEnv) > 0 {
+		log.Printf("settings from the environment: %s", strings.Join(fromEnv, ", "))
+	}
 
 	if err := os.MkdirAll(dirOf(*dbPath), 0o755); err != nil {
 		log.Fatalf("creating data directory: %v", err)
@@ -59,6 +69,9 @@ func main() {
 	defer st.Close()
 
 	adminFPs := loadAdminFPs(*adminsPath)
+	for _, fp := range splitList(*adminFPsFlag) {
+		adminFPs[fp] = true
+	}
 	h, err := hub.NewHub(st, adminFPs)
 	if err != nil {
 		log.Fatalf("creating hub: %v", err)

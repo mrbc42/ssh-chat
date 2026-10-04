@@ -66,6 +66,10 @@ services:
     ports:
       - "${CHAT_BIND_IP:-0.0.0.0}:${CHAT_PORT:-2222}:2222"
 
+    # All ssh-chat settings (SSHCHAT_*) come from .env in this directory; see
+    # ../.env.example for every option. TZ is set here from the same file.
+    env_file:
+      - .env
     environment:
       TZ: ${TZ:-UTC}
 
