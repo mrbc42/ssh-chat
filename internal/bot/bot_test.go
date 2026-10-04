@@ -878,3 +878,28 @@ func TestKeylessAdviceIsPrivate(t *testing.T) {
 		}
 	}
 }
+
+// /help and !help list the same commands, and every command is documented.
+func TestCommandHelpMatchesTheHandlers(t *testing.T) {
+	e := newEnv(t)
+	handlers := e.b.handlers()
+	seen := map[string]bool{}
+	for _, c := range commandHelp {
+		seen[c.name] = true
+		if _, ok := handlers[c.name]; !ok {
+			t.Errorf("commandHelp documents !%s but there is no handler", c.name)
+		}
+		if !strings.HasPrefix(c.usage, "!"+c.name) || c.help == "" {
+			t.Errorf("bad help entry %+v", c)
+		}
+	}
+	for name := range handlers {
+		if !seen[name] {
+			t.Errorf("!%s has a handler but is missing from commandHelp (so from /help)", name)
+		}
+	}
+	lines := HelpLines("SysOp-Gus")
+	if !strings.Contains(lines[0], "SysOp-Gus commands") || !strings.Contains(strings.Join(lines, "\n"), "!tell <user> <message>") {
+		t.Fatalf("server help section: %q", lines)
+	}
+}

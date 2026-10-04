@@ -384,7 +384,7 @@ func cmdHelp(c *CmdCtx, _ []string) []string {
 		}
 		lines = append(lines, fmt.Sprintf("  %-22s %s", cmd.Usage, cmd.Help))
 	}
-	return lines
+	return append(lines, c.Hub.helpExtra...)
 }
 
 func cmdNick(c *CmdCtx, args []string) []string {

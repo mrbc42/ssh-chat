@@ -292,3 +292,20 @@ func TestHelpListsOnlyUsableCommands(t *testing.T) {
 		t.Errorf("non-operator in someone else's channel sees /kick")
 	}
 }
+
+func TestHelpIncludesExtraSectionOnlyWhenSet(t *testing.T) {
+	h, _ := adminHub(t)
+	s := NewSession("SHA256:u", "", "plain")
+	h.Main().Join(s)
+	if got := helpText(t, h, s); strings.Contains(got, "!tell") {
+		t.Fatalf("no extra section expected before SetHelpExtra:\n%s", got)
+	}
+	h.SetHelpExtra([]string{"Gus commands (type them in #main):", "  !tell <user> <message>  Leave a message"})
+	got := helpText(t, h, s)
+	if !strings.Contains(got, "Gus commands") || !strings.Contains(got, "!tell <user> <message>") {
+		t.Fatalf("extra section missing from /help:\n%s", got)
+	}
+	if strings.Index(got, "/quit") > strings.Index(got, "Gus commands") {
+		t.Fatalf("the bot section should come after the slash commands:\n%s", got)
+	}
+}

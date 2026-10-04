@@ -26,6 +26,7 @@ type Hub struct {
 	filter    *filter.Filter
 	observer  Observer
 	version   string
+	helpExtra []string // extra /help lines, e.g. the bot's commands (set once at startup)
 
 	onlineMu sync.Mutex // guards the cached online count below
 	onlineAt time.Time
@@ -53,6 +54,9 @@ func NewHub(st *store.Store, adminFPs map[string]bool) (*Hub, error) {
 	h.rooms[strings.ToLower(ch.Name)] = h.main
 	return h, nil
 }
+
+// SetHelpExtra appends lines to every /help listing. Call before serving.
+func (h *Hub) SetHelpExtra(lines []string) { h.helpExtra = lines }
 
 // SetVersion records the server's build version, shown at the top of /help.
 func (h *Hub) SetVersion(v string) { h.version = v }

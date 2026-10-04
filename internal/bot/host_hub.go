@@ -46,6 +46,7 @@ func Start(ctx context.Context, h *hub.Hub, st *store.Store, o Options) (string,
 			}
 		}
 	}()
+	h.SetHelpExtra(HelpLines(b.Nick()))
 	h.SetObserver(hh)
 	h.Main().Join(hh.sess)
 	go b.Run(ctx, hh.events)

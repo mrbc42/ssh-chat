@@ -32,13 +32,7 @@ func (b *Bot) command(p Person, text string, addressed bool) {
 	name, args, _ := strings.Cut(strings.TrimPrefix(text, "!"), " ")
 	name = strings.ToLower(name)
 	args = strings.TrimSpace(args)
-	handlers := map[string]func(Person, string){
-		"help": b.cmdHelp, "time": b.cmdTime, "who": b.cmdWho, "seen": b.cmdSeen,
-		"tell": b.cmdTell, "stats": b.cmdStats, "rules": b.cmdRules, "motd": b.cmdMotd,
-		"roll": b.cmdRoll, "fortune": b.cmdFortune, "quote": b.cmdQuote, "trivia": b.cmdTrivia,
-		"forget": b.cmdForget, "remember": b.cmdRemember,
-	}
-	h, ok := handlers[name]
+	h, ok := b.handlers()[name]
 	if !ok {
 		if addressed {
 			b.addressed(p, text)
@@ -69,10 +63,51 @@ func (b *Bot) addressed(p Person, text string) {
 	b.say(kindPlain, b.text("fallback", b.vars(p)))
 }
 
+// handlers maps each !command name to its implementation.
+func (b *Bot) handlers() map[string]func(Person, string) {
+	return map[string]func(Person, string){
+		"help": b.cmdHelp, "time": b.cmdTime, "who": b.cmdWho, "seen": b.cmdSeen,
+		"tell": b.cmdTell, "stats": b.cmdStats, "rules": b.cmdRules, "motd": b.cmdMotd,
+		"roll": b.cmdRoll, "fortune": b.cmdFortune, "quote": b.cmdQuote, "trivia": b.cmdTrivia,
+		"forget": b.cmdForget, "remember": b.cmdRemember,
+	}
+}
+
+// commandHelp documents every !command, in display order. It feeds both Gus's
+// own !help and the server's /help, so neither can drift from the other (a
+// test checks it against handlers()).
+var commandHelp = []struct{ name, usage, help string }{
+	{"help", "!help", "List my commands."},
+	{"time", "!time", "The board's time."},
+	{"who", "!who", "Who is online right now."},
+	{"seen", "!seen <user>", "When a user was last on."},
+	{"tell", "!tell <user> <message>", "Leave a message, delivered at their next login (SSH-key users only)."},
+	{"stats", "!stats", "Board statistics."},
+	{"rules", "!rules", "The house rules."},
+	{"motd", "!motd", "Message of the day."},
+	{"roll", "!roll NdM", "Roll dice, e.g. !roll 2d6."},
+	{"fortune", "!fortune", "A fortune."},
+	{"quote", "!quote", "A quote."},
+	{"trivia", "!trivia [answer|top]", "Ask a trivia question, answer it, or show the leaderboard."},
+	{"forget", "!forget", "Erase everything I know about you and stop tracking you."},
+	{"remember", "!remember", "Start tracking you again after !forget."},
+}
+
+// HelpLines is the section the server's /help shows for the bot's commands.
+func HelpLines(nick string) []string {
+	lines := []string{nick + " commands (type them in #main):"}
+	for _, c := range commandHelp {
+		lines = append(lines, fmt.Sprintf("  %-22s %s", c.usage, c.help))
+	}
+	return lines
+}
+
 func (b *Bot) cmdHelp(p Person, _ string) {
-	b.say(kindPlain, b.text("help_intro", b.vars(p)),
-		"!help  !time  !who  !seen <user>  !tell <user> <message>  !stats  !rules  !motd  "+
-			"!roll NdM  !fortune  !quote  !trivia [answer|top]  !forget  !remember")
+	var usages []string
+	for _, c := range commandHelp {
+		usages = append(usages, c.usage)
+	}
+	b.say(kindPlain, b.text("help_intro", b.vars(p)), strings.Join(usages, "  "))
 }
 
 func (b *Bot) cmdTime(p Person, _ string) {
