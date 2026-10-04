@@ -52,6 +52,14 @@ CREATE TABLE IF NOT EXISTS bans (
     PRIMARY KEY (channel_id, fp, ip)
 );
 
+CREATE TABLE IF NOT EXISTS invites (
+    channel_id  INTEGER NOT NULL REFERENCES channels(id),
+    fp          TEXT NOT NULL,
+    invited_by  TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (channel_id, fp)
+);
+
 CREATE TABLE IF NOT EXISTS global_bans (
     fp         TEXT NOT NULL DEFAULT '',
     ip         TEXT NOT NULL DEFAULT '',

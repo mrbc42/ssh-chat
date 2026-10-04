@@ -894,3 +894,164 @@ func TestOwnerCommandOnAPermanentChannel(t *testing.T) {
 		t.Fatalf("admin on a permanent channel:\n%s", got)
 	}
 }
+
+// The case that prompted this: someone who was in a channel before it was
+// locked gets no automatic exception. Staff can invite them (by SSH key).
+func TestInvitesLetPeopleIntoALockedChannel(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	owner := NewSession("SHA256:owner", "1.1.1.1", "alice")
+	regular := NewSession("SHA256:regular", "2.2.2.2", "bob")
+	stranger := NewSession("SHA256:stranger", "3.3.3.3", "carol")
+	keyless := NewSession("anon-5555", "4.4.4.4", "ghost")
+	for _, s := range []*Session{owner, regular, stranger, keyless} {
+		h.Main().Join(s)
+	}
+	_ = st.SetNickname(ctx, "SHA256:regular", "bob")
+	_ = st.SetNickname(ctx, "SHA256:stranger", "carol")
+	time.Sleep(150 * time.Millisecond)
+	_ = info(t, h, owner, "/create club")
+	time.Sleep(200 * time.Millisecond)
+	_ = info(t, h, regular, "/join club") // bob is a regular: he was in it while it was unlocked
+	time.Sleep(200 * time.Millisecond)
+	_ = info(t, h, regular, "/leave")
+	_ = info(t, h, owner, "/lock")
+	time.Sleep(300 * time.Millisecond)
+
+	inClub := func(s *Session) bool { r := s.CurrentRoom(); return r != nil && r.Name() == "club" }
+	tryJoin := func(s *Session) string {
+		got := info(t, h, s, "/join club")
+		time.Sleep(250 * time.Millisecond)
+		return got
+	}
+
+	// 1) No automatic exception for past members. The refusal says what to do.
+	if got := tryJoin(regular); !strings.Contains(got, "locked") || !strings.Contains(got, "/invite") || inClub(regular) {
+		t.Fatalf("a former member must not get back into a locked channel by default: %q", got)
+	}
+
+	// 2) Only staff can invite.
+	if got := info(t, h, regular, "/invite carol"); strings.Contains(got, "Invited") {
+		t.Fatalf("a non-staff user must not invite: %q", got)
+	}
+	if clubCh, _, _ := st.GetChannelByName(ctx, "club"); true {
+		if ok, _ := st.IsInvited(ctx, clubCh.ID, "SHA256:stranger"); ok {
+			t.Fatal("a refused /invite must not be saved")
+		}
+	}
+
+	// 3) An invite lets bob back in (and the invitee is told).
+	drain(regular)
+	if got := info(t, h, owner, "/invite bob"); !strings.Contains(got, "Invited bob to #club") {
+		t.Fatalf("invite: %q", got)
+	}
+	time.Sleep(200 * time.Millisecond)
+	notified := false
+	for _, l := range collectLines(regular) {
+		notified = notified || strings.Contains(l.Body, "alice invited you to #club")
+	}
+	if !notified {
+		t.Fatal("an online invitee should be told")
+	}
+	_ = tryJoin(regular)
+	if !inClub(regular) {
+		t.Fatal("an invited user must be able to join a locked channel")
+	}
+	// ...and a different user who is not invited still can't.
+	if got := tryJoin(stranger); !strings.Contains(got, "locked") || inClub(stranger) {
+		t.Fatalf("an uninvited user must still be refused: %q", got)
+	}
+
+	// 4) The invite is tied to the key, so it survives leaving, disconnecting and a restart.
+	_ = info(t, h, regular, "/leave")
+	time.Sleep(200 * time.Millisecond)
+	back := NewSession("SHA256:regular", "2.2.2.2", "bob") // a new connection with the same key
+	h.Main().Join(back)
+	time.Sleep(100 * time.Millisecond)
+	_ = info(t, h, back, "/join club")
+	time.Sleep(250 * time.Millisecond)
+	if !inClub(back) {
+		t.Fatal("the invite should follow the SSH key to a new connection")
+	}
+
+	// 5) The invite list: staff see names; others see only that it is locked.
+	if got := infoAll(t, h, owner, "/invite"); !strings.Contains(got, "Invited to #club (locked)") || !strings.Contains(got, "bob") {
+		t.Fatalf("/invite with no argument should list the invited:\n%s", got)
+	}
+	if got := infoAll(t, h, owner, "/owner"); !strings.Contains(got, "LOCKED") || !strings.Contains(got, "Invited: bob") {
+		t.Fatalf("/owner should show staff the invited list:\n%s", got)
+	}
+	if got := infoAll(t, h, stranger, "/owner club"); !strings.Contains(got, "LOCKED") || strings.Contains(got, "Invited:") {
+		t.Fatalf("the invite list is for staff only:\n%s", got)
+	}
+
+	// 6) Withdrawing it: no re-entry while locked.
+	if got := info(t, h, owner, "/uninvite bob"); !strings.Contains(got, "Withdrew bob's invite") {
+		t.Fatalf("uninvite: %q", got)
+	}
+	_ = info(t, h, back, "/leave")
+	time.Sleep(200 * time.Millisecond)
+	if got := tryJoin(back); !strings.Contains(got, "locked") || inClub(back) {
+		t.Fatalf("after /uninvite the user must be locked out again: %q", got)
+	}
+	if got := info(t, h, owner, "/uninvite bob"); !strings.Contains(got, "was not invited") {
+		t.Fatalf("uninviting twice: %q", got)
+	}
+
+	// 7) Users without an SSH key can't be invited; unknown names are reported.
+	if got := info(t, h, owner, "/invite ghost"); !strings.Contains(got, "no SSH key") || !strings.Contains(got, "!ssh") {
+		t.Fatalf("keyless invite: %q", got)
+	}
+	if got := info(t, h, owner, "/invite nobody-here"); !strings.Contains(got, "No such user") {
+		t.Fatalf("unknown invite: %q", got)
+	}
+
+	// 8) A ban beats an invite.
+	_ = info(t, h, owner, "/invite carol")
+	ch, _, _ := st.GetChannelByName(ctx, "club")
+	_ = st.AddBan(ctx, ch.ID, "SHA256:stranger", "", "SHA256:owner", "test")
+	if got := tryJoin(stranger); !strings.Contains(got, "banned") || inClub(stranger) {
+		t.Fatalf("a banned user must stay out even if invited: %q", got)
+	}
+
+	// 9) /help lists the invite commands to staff only.
+	if got := helpText(t, h, owner); !strings.Contains(got, "/invite") || !strings.Contains(got, "/uninvite") {
+		t.Fatalf("staff /help should list the invite commands:\n%s", got)
+	}
+	if got := helpText(t, h, stranger); strings.Contains(got, "/invite") {
+		t.Fatalf("non-staff /help must not:\n%s", got)
+	}
+}
+
+// Invites by an unlocked channel and offline-known users, and a permanent channel.
+func TestInviteOfflineKnownUserAndPermanentChannel(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	if err := h.EnsurePermanent(ctx, []string{"club"}); err != nil {
+		t.Fatal(err)
+	}
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	h.Main().Join(admin)
+	_ = st.SetNickname(ctx, "SHA256:away", "erin") // known to the server, offline now
+	_ = info(t, h, admin, "/join club")
+	time.Sleep(250 * time.Millisecond)
+
+	got := info(t, h, admin, "/invite erin")
+	if !strings.Contains(got, "Invited erin to #club") || !strings.Contains(got, "not locked right now") {
+		t.Fatalf("invite of an offline known user to an unlocked channel: %q", got)
+	}
+	ch, _, _ := st.GetChannelByName(ctx, "club")
+	if ok, _ := st.IsInvited(ctx, ch.ID, "SHA256:away"); !ok {
+		t.Fatal("the invite for the offline user should be stored against their key")
+	}
+	_ = info(t, h, admin, "/lock")
+	time.Sleep(200 * time.Millisecond)
+	erin := NewSession("SHA256:away", "5.5.5.5", "erin")
+	h.Main().Join(erin)
+	time.Sleep(100 * time.Millisecond)
+	_ = info(t, h, erin, "/join club")
+	time.Sleep(250 * time.Millisecond)
+	if r := erin.CurrentRoom(); r == nil || r.Name() != "club" {
+		t.Fatal("a user invited while offline should get in when she next connects")
+	}
+}

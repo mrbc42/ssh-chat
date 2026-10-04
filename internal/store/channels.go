@@ -162,6 +162,7 @@ func (s *Store) DeleteChannel(ctx context.Context, id int64) error {
 		`DELETE FROM messages WHERE channel_id = ?`,
 		`DELETE FROM operators WHERE channel_id = ?`,
 		`DELETE FROM bans WHERE channel_id = ?`,
+		`DELETE FROM invites WHERE channel_id = ?`,
 		`DELETE FROM channels WHERE id = ? AND is_main = 0`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {

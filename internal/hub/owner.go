@@ -100,6 +100,18 @@ func cmdOwner(c *CmdCtx, args []string) []string {
 
 	// And what that means for the caller.
 	role, _, _ := c.Store.IsOwnerOrOp(c.ctx, ch.ID, c.Sess.FP)
+	if ch.Locked {
+		lines = append(lines, "  This channel is LOCKED: only its staff and invited users can join.")
+		if role != "" || c.Hub.IsAdmin(c.Sess.FP) { // the invite list is for staff eyes
+			if fps, _ := c.Store.ListInvites(c.ctx, ch.ID); len(fps) > 0 {
+				names := make([]string, len(fps))
+				for i, fp := range fps {
+					names[i] = who(fp)
+				}
+				lines = append(lines, "  Invited: "+strings.Join(names, ", "))
+			}
+		}
+	}
 	switch {
 	case role == store.RoleOwner:
 		lines = append(lines, "  You are the owner of this channel. Join it to use /lock, /topic, /op, /kick and /ban.")

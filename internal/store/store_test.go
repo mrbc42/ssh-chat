@@ -222,3 +222,45 @@ func TestOldDatabaseGainsTheEntryMessageColumn(t *testing.T) {
 		t.Fatalf("entry message not persisted: %q", ch2.EntryMessage)
 	}
 }
+
+func TestInvites(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "i.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a, _ := st.CreateChannel(ctx, "alpha", "SHA256:o")
+	b, _ := st.CreateChannel(ctx, "beta", "SHA256:o")
+
+	if ok, _ := st.IsInvited(ctx, a.ID, "SHA256:x"); ok {
+		t.Fatal("nobody is invited by default")
+	}
+	if err := st.AddInvite(ctx, a.ID, "SHA256:x", "SHA256:o"); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.AddInvite(ctx, a.ID, "SHA256:x", "SHA256:o") // idempotent
+	_ = st.AddInvite(ctx, a.ID, "SHA256:y", "SHA256:o")
+	if ok, _ := st.IsInvited(ctx, a.ID, "SHA256:x"); !ok {
+		t.Fatal("x should be invited to alpha")
+	}
+	if ok, _ := st.IsInvited(ctx, b.ID, "SHA256:x"); ok {
+		t.Fatal("an invite is per channel")
+	}
+	if l, _ := st.ListInvites(ctx, a.ID); len(l) != 2 || l[0] != "SHA256:x" {
+		t.Fatalf("list = %v", l)
+	}
+	if removed, _ := st.RemoveInvite(ctx, a.ID, "SHA256:x"); !removed {
+		t.Fatal("remove should report it existed")
+	}
+	if removed, _ := st.RemoveInvite(ctx, a.ID, "SHA256:x"); removed {
+		t.Fatal("removing twice should report nothing to remove")
+	}
+	// Deleting the channel deletes its invites.
+	if err := st.DeleteChannel(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := st.ListInvites(ctx, a.ID); len(l) != 0 {
+		t.Fatalf("invites survived the channel: %v", l)
+	}
+}

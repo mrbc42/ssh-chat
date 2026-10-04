@@ -123,6 +123,14 @@ func init() {
 		Fn: cmdOwner,
 	})
 	register(&Command{
+		Name: "invite", Usage: "/invite [user]", Help: "Let a user into this channel while it is locked (no argument: list the invited).",
+		NeedsOp: true, Fn: cmdInvite,
+	})
+	register(&Command{
+		Name: "uninvite", Usage: "/uninvite <user>", Help: "Withdraw a user's invite to this channel.",
+		NeedsOp: true, Fn: cmdUninvite,
+	})
+	register(&Command{
 		Name: "lock", Usage: "/lock", Help: "Lock the current channel (blocks new joins; still listed).",
 		NeedsOp: true, Fn: cmdLock,
 	})
@@ -548,8 +556,9 @@ func joinByName(c *CmdCtx, name string, justCreated bool) []string {
 		}
 		if ch.Locked {
 			role, _, _ := c.Store.IsOwnerOrOp(c.ctx, ch.ID, c.Sess.FP)
-			if role != store.RoleOwner && role != store.RoleOperator {
-				return []string{fmt.Sprintf("#%s is locked.", ch.Name)}
+			invited, _ := c.Store.IsInvited(c.ctx, ch.ID, c.Sess.FP)
+			if role != store.RoleOwner && role != store.RoleOperator && !invited {
+				return []string{fmt.Sprintf("#%s is locked. Only its staff and invited users can join: ask its owner or an operator to /invite you.", ch.Name)}
 			}
 		}
 	}
