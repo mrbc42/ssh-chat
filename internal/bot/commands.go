@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -84,7 +85,7 @@ var commandHelp = []struct{ name, usage, help string }{
 	{"tell", "!tell <user> <message>", "Leave a message, delivered at their next login (SSH-key users only)."},
 	{"stats", "!stats", "Board statistics."},
 	{"rules", "!rules", "The house rules."},
-	{"motd", "!motd", "Message of the day."},
+	{"motd", "!motd", "Show the message of the day. Admins: !motd set <text>, !motd clear."},
 	{"roll", "!roll NdM", "Roll dice, e.g. !roll 2d6."},
 	{"fortune", "!fortune", "A fortune."},
 	{"quote", "!quote", "A quote."},
@@ -215,8 +216,52 @@ func (b *Bot) cmdRules(p Person, _ string) {
 	b.say(kindPlain, append([]string{b.text("rules_intro", b.vars(p))}, b.c.Rules...)...)
 }
 
-func (b *Bot) cmdMotd(p Person, _ string) {
-	b.say(kindPlain, b.text("motd_intro", b.vars(p)), b.c.Motd)
+// currentMotd is the MOTD an admin has set, or the data-file default if none
+// has ever been set. An admin-cleared MOTD is "" (nothing is shown).
+func (b *Bot) currentMotd() string {
+	if b.st.get("motd_set") == "1" {
+		return b.st.get("motd")
+	}
+	return b.c.Motd
+}
+
+const maxMotdChars = 300
+
+// cmdMotd shows the message of the day; "set <text>" and "clear" are for server
+// administrators only. Authority comes from the sender's SSH key fingerprint,
+// which the server verified at login and which chat text cannot forge; a
+// keyless user's identity is random and can never be an admin.
+func (b *Bot) cmdMotd(p Person, args string) {
+	sub, rest, _ := strings.Cut(strings.TrimSpace(args), " ")
+	switch strings.ToLower(sub) {
+	case "set", "clear":
+		if p.Anon || !b.host.IsAdmin(p.FP) {
+			b.say(kindPlain, b.text("motd_denied", b.vars(p)))
+			return
+		}
+		if strings.EqualFold(sub, "clear") {
+			b.st.set("motd", "")
+			b.st.set("motd_set", "1")
+			log.Printf("bot: MOTD cleared by %s (%s)", clean(p.Nick, 24), p.FP)
+			b.say(kindPlain, b.text("motd_cleared", b.vars(p)))
+			return
+		}
+		text := clean(rest, maxMotdChars)
+		if text == "" {
+			b.say(kindPlain, b.text("motd_usage", b.vars(p)))
+			return
+		}
+		b.st.set("motd", text)
+		b.st.set("motd_set", "1")
+		log.Printf("bot: MOTD set by %s (%s)", clean(p.Nick, 24), p.FP)
+		b.say(kindPlain, b.text("motd_set", b.vars(p)))
+		return
+	}
+	if text := b.currentMotd(); text != "" {
+		b.say(kindPlain, b.text("motd_intro", b.vars(p)), text)
+	} else {
+		b.say(kindPlain, b.text("motd_none", b.vars(p)))
+	}
 }
 
 func (b *Bot) cmdRoll(p Person, args string) {

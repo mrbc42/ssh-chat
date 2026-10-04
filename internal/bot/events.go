@@ -132,7 +132,10 @@ func (b *Bot) onLogin(p Person) {
 	case speakNormal:
 		line = b.text("login", v)
 	}
-	b.say(kindEvent, line) // say() skips an empty line
+	b.say(kindEvent, line)                   // say() skips an empty line
+	if motd := b.currentMotd(); motd != "" { // everyone gets the message of the day, privately
+		b.pm(p.Nick, "MOTD: "+motd)
+	}
 	for _, t := range private {
 		b.pm(p.Nick, t)
 	}

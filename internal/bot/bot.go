@@ -25,6 +25,7 @@ type Host interface {
 	PM(nick, text string)    // a private message
 	Online() []Person        // every connected human, server-wide (bot excluded)
 	OnlineCount() int        // len(Online()) without building the list; may be up to a second stale
+	IsAdmin(fp string) bool  // is this server-verified key fingerprint a server administrator?
 }
 
 type EventKind int
@@ -334,6 +335,7 @@ var requiredPools = []string{
 	"trivia_ask", "trivia_correct", "trivia_wrong", "trivia_timeout", "trivia_none", "trivia_already",
 	"trivia_top", "trivia_top_empty", "trivia_anon",
 	"forget_done", "forget_anon", "remember_done",
+	"motd_set", "motd_cleared", "motd_denied", "motd_none", "motd_usage",
 }
 
 func validatePools(c *Content) error {

@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS channels (
     locked       INTEGER NOT NULL DEFAULT 0,
     announce     INTEGER NOT NULL DEFAULT 1,
     created_at   INTEGER NOT NULL,
-    is_main      INTEGER NOT NULL DEFAULT 0
+    is_main      INTEGER NOT NULL DEFAULT 0,
+    entry_message TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -72,6 +73,37 @@ CREATE TABLE IF NOT EXISTS admin_alerts (
 `
 
 func (s *Store) migrate(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, schema)
+	if _, err := s.db.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	// Columns added after the first release: add them to existing databases.
+	return s.ensureColumn(ctx, "channels", "entry_message", "TEXT NOT NULL DEFAULT ''")
+}
+
+// ensureColumn adds a column to an existing table if it is not there yet
+// (CREATE TABLE IF NOT EXISTS never alters a table that already exists).
+func (s *Store) ensureColumn(ctx context.Context, table, column, decl string) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` `+decl)
 	return err
 }

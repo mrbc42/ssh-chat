@@ -21,13 +21,16 @@ type Channel struct {
 	Announce  bool
 	CreatedAt time.Time
 	IsMain    bool
+
+	// EntryMessage is shown privately to everyone who joins the channel.
+	EntryMessage string
 }
 
 func scanChannel(row interface{ Scan(...any) error }) (Channel, error) {
 	var c Channel
 	var locked, announce, isMain int
 	var createdAt int64
-	err := row.Scan(&c.ID, &c.Name, &c.Topic, &c.CreatorFP, &locked, &announce, &createdAt, &isMain)
+	err := row.Scan(&c.ID, &c.Name, &c.Topic, &c.CreatorFP, &locked, &announce, &createdAt, &isMain, &c.EntryMessage)
 	if err != nil {
 		return Channel{}, err
 	}
@@ -38,7 +41,7 @@ func scanChannel(row interface{ Scan(...any) error }) (Channel, error) {
 	return c, nil
 }
 
-const channelCols = "id, name, topic, creator_fp, locked, announce, created_at, is_main"
+const channelCols = "id, name, topic, creator_fp, locked, announce, created_at, is_main, entry_message"
 
 func (s *Store) GetOrCreateMainChannel(ctx context.Context) (Channel, error) {
 	ch, ok, err := s.GetChannelByName(ctx, MainChannelName)
@@ -203,4 +206,10 @@ func (s *Store) CountChannelsByCreator(ctx context.Context, fp string) (int, err
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM channels WHERE creator_fp = ? AND is_main = 0`, fp).Scan(&n)
 	return n, err
+}
+
+// SetEntryMessage stores the channel's entry message ("" clears it).
+func (s *Store) SetEntryMessage(ctx context.Context, channelID int64, text string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE channels SET entry_message = ? WHERE id = ?`, text, channelID)
+	return err
 }

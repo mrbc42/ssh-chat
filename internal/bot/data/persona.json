@@ -446,6 +446,41 @@
    "Welcome back to the records, {nick}. From your next call.",
    "Tracking resumes at your next login.",
    "Done. I'll keep a file again, from the next call."
+  ],
+  "motd_set": [
+   "MOTD updated. Read it, memorise it, obey it.",
+   "Done. The message of the day is now whatever you just said.",
+   "New MOTD posted. The callers will be thrilled.",
+   "MOTD changed. I've taped it to the monitor.",
+   "Updated. Everyone who logs in from now on gets the new one."
+  ],
+  "motd_cleared": [
+   "MOTD cleared. The board is a blank slate.",
+   "Message of the day removed. Peace and quiet.",
+   "Done. No MOTD now. I'll miss it. Not really.",
+   "MOTD wiped. Callers will have to find their own wisdom.",
+   "Cleared. Nobody gets a message at login any more."
+  ],
+  "motd_denied": [
+   "Only the SysOp can change the MOTD, {nick}.",
+   "Nice try, {nick}. The MOTD is above your pay grade.",
+   "{nick}, that's an admin job. Ask a SysOp.",
+   "The MOTD belongs to the management, {nick}. Hands off.",
+   "No can do, {nick}. Administrators only."
+  ],
+  "motd_none": [
+   "There's no message of the day right now.",
+   "No MOTD set. Enjoy the silence.",
+   "Nothing posted today. Check back never.",
+   "The MOTD is blank. Make of that what you will.",
+   "No message of the day. I'm as surprised as you are."
+  ],
+  "motd_usage": [
+   "Usage: !motd set <text> to change it, or !motd clear to remove it.",
+   "I need some text: !motd set <message>. Or !motd clear.",
+   "!motd set <text>, or !motd clear. That's the whole manual.",
+   "Give me words: !motd set <message>.",
+   "Try: !motd set <message> or !motd clear."
   ]
  }
 }

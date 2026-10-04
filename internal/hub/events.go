@@ -82,6 +82,7 @@ type RoomInfo struct {
 	Locked   bool
 	Announce bool
 	Members  int
+	Entry    string // the channel entry message ("" = none)
 }
 
 // roomEvent is the internal message type processed by a Room's actor loop.
@@ -131,6 +132,10 @@ type evSetAnnounce struct {
 	announce bool
 	by       *Session
 }
+type evSetEntry struct {
+	text string
+	by   *Session
+}
 type evSetTopic struct {
 	topic string
 	by    *Session
@@ -158,6 +163,7 @@ func (evSystem) isRoomEvent()        {}
 func (evForceRemove) isRoomEvent()   {}
 func (evSetLocked) isRoomEvent()     {}
 func (evSetAnnounce) isRoomEvent()   {}
+func (evSetEntry) isRoomEvent()      {}
 func (evSetTopic) isRoomEvent()      {}
 func (evWho) isRoomEvent()           {}
 func (evSnapshot) isRoomEvent()      {}

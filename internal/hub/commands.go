@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mrbc42/ssh-chat/internal/store"
 )
@@ -196,6 +197,10 @@ func init() {
 	register(&Command{
 		Name: "history", Usage: "/history [n]", Help: "Load older messages for this channel (default 100, max 500); PgUp/PgDn/mouse wheel to scroll.",
 		Fn: cmdUIOnly,
+	})
+	register(&Command{
+		Name: "welcome", Usage: "/welcome [text|clear]", Help: "Set (or clear) this channel's entry message, shown to everyone who joins.",
+		NeedsOp: true, Fn: cmdWelcome,
 	})
 	register(&Command{
 		Name: "gus", Usage: "/gus", Help: "List SysOp-Gus's !commands (say them in #main).", NeedsBot: true,
@@ -1167,4 +1172,56 @@ func cmdGus(c *CmdCtx, _ []string) []string {
 		return []string{"SysOp-Gus is not running on this server."}
 	}
 	return c.Hub.botHelp
+}
+
+const maxEntryMessage = 300
+
+// cmdWelcome sets, clears or shows the channel entry message. Only owners and
+// operators reach it (Command.NeedsOp); the text is sanitised and
+// word-filtered like chat.
+func cmdWelcome(c *CmdCtx, args []string) []string {
+	room := c.Sess.CurrentRoom()
+	text := strings.TrimSpace(restArg(args))
+	switch {
+	case text == "":
+		cur := room.Info().Entry
+		if cur == "" {
+			return []string{"No entry message is set for #" + room.Name + ". Usage: /welcome <text>, or /welcome clear."}
+		}
+		return []string{"Entry message for #" + room.Name + ": " + cur, "Change it with /welcome <text>, or remove it with /welcome clear."}
+	case strings.EqualFold(text, "clear"):
+		room.Send(evSetEntry{text: "", by: c.Sess})
+	default:
+		clean := c.Hub.mask(cleanLine(text, maxEntryMessage))
+		if clean == "" {
+			return []string{"Usage: /welcome <text>, or /welcome clear."}
+		}
+		room.Send(evSetEntry{text: clean, by: c.Sess})
+	}
+	return nil
+}
+
+// cleanLine makes untrusted text safe to store and show: control characters
+// (including ESC and newlines) become spaces, runs of whitespace collapse, and
+// the result is cut to max characters.
+func cleanLine(s string, max int) string {
+	var b strings.Builder
+	space, n := false, 0
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			space = b.Len() > 0
+			continue
+		}
+		if space {
+			b.WriteByte(' ')
+			space = false
+			n++
+		}
+		b.WriteRune(r)
+		n++
+		if n >= max {
+			break
+		}
+	}
+	return b.String()
 }

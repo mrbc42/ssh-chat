@@ -40,6 +40,7 @@ type Room struct {
 	locked   bool
 	announce bool
 	topic    string
+	entry    string // channel entry message, shown privately to each joiner
 }
 
 func newRoom(h *Hub, st *store.Store, ch store.Channel) *Room {
@@ -54,6 +55,7 @@ func newRoom(h *Hub, st *store.Store, ch store.Channel) *Room {
 		locked:   ch.Locked,
 		announce: ch.Announce,
 		topic:    ch.Topic,
+		entry:    ch.EntryMessage,
 	}
 	go r.run()
 	return r
@@ -146,6 +148,14 @@ func (r *Room) run() {
 				state = "on"
 			}
 			r.broadcastSystem(ctx, fmt.Sprintf("*** join/leave announcements in #%s turned %s by %s ***", r.Name, state, e.by.Nick()), true)
+		case evSetEntry:
+			r.entry = e.text
+			_ = r.store.SetEntryMessage(ctx, r.ID, e.text)
+			note := "set the channel entry message"
+			if e.text == "" {
+				note = "cleared the channel entry message"
+			}
+			r.broadcastSystem(ctx, fmt.Sprintf("*** %s %s ***", e.by.Nick(), note), true)
 		case evSetTopic:
 			r.topic = e.topic
 			_ = r.store.SetTopic(ctx, r.ID, e.topic)
@@ -163,6 +173,7 @@ func (r *Room) run() {
 				Locked:   r.locked,
 				Announce: r.announce,
 				Members:  len(r.members),
+				Entry:    r.entry,
 			}
 		case evFindMember:
 			var found []*Session
@@ -226,6 +237,10 @@ func (r *Room) handleJoin(ctx context.Context, sess *Session) {
 		SwitchRoom: &RoomInfo{Name: r.Name, Topic: r.topic, Locked: r.locked, Announce: r.announce, Members: len(r.members)},
 		Scrollback: lines,
 	})
+	if r.entry != "" { // the channel's welcome, for this joiner only
+		line := infoLine(fmt.Sprintf("Welcome to #%s: %s", r.Name, r.entry))
+		sess.send(Outbound{Line: &line})
+	}
 	if sess.joinNotice != "" {
 		line := infoLine(sess.joinNotice)
 		sess.send(Outbound{Line: &line})

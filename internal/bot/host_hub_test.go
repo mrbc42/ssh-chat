@@ -123,7 +123,11 @@ func TestBotIsAParticipantInTheRealHub(t *testing.T) {
 	erin2 := hub.NewSession("SHA256:erin", "2.2.2.2", "Erin")
 	h.Main().Join(erin2)
 	_, pm = fromBot(collect(erin2, 2*time.Second))
-	if len(pm) != 1 || !strings.Contains(pm[0], "the roast is ready") {
+	delivered := false
+	for _, m := range pm {
+		delivered = delivered || strings.Contains(m, "the roast is ready")
+	}
+	if !delivered {
 		t.Fatalf("tell not delivered at login: %v", pm)
 	}
 
@@ -197,5 +201,55 @@ func TestBotAnswersInOtherChannelsOnTheRealHub(t *testing.T) {
 	chat, pm := fromBot(collect(dave, 800*time.Millisecond))
 	if len(chat)+len(pm) != 0 {
 		t.Fatalf("Gus spoke during normal chat in #lounge: %v %v", chat, pm)
+	}
+}
+
+// On the real hub: an admin key sets the MOTD; the next user to log in is sent
+// it privately. A non-admin key cannot.
+func TestMotdAdminKeyOnTheRealHub(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "chat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := hub.NewHub(st, map[string]bool{"SHA256:boss": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := filepath.Join(dir, "data")
+	_ = os.MkdirAll(data, 0o755)
+	_ = os.WriteFile(filepath.Join(data, "config.json"), []byte(`{"typing_delay_ms":[0,0]}`), 0o644)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := Start(ctx, h, st, Options{DBPath: filepath.Join(dir, "bot.db"), UnmatchedPath: filepath.Join(dir, "u.log"), DataDir: data}); err != nil {
+		t.Fatal(err)
+	}
+	boss := hub.NewSession("SHA256:boss", "1.1.1.1", "Boss")
+	pleb := hub.NewSession("SHA256:pleb", "2.2.2.2", "Pleb")
+	h.Main().Join(boss)
+	h.Main().Join(pleb)
+	time.Sleep(200 * time.Millisecond)
+	collect(boss, 1500*time.Millisecond)
+	collect(pleb, 100*time.Millisecond)
+
+	hub.HandleInput(ctx, h, pleb, "!motd set Pwned by a non-admin")
+	collect(pleb, 1500*time.Millisecond) // the refusal (plus his one-off first-message line)
+	hub.HandleInput(ctx, h, boss, "!motd set Server restarts at midnight")
+	collect(boss, 1500*time.Millisecond)
+
+	late := hub.NewSession("SHA256:late", "3.3.3.3", "Late")
+	h.Main().Join(late)
+	_, pm := fromBot(collect(late, 2*time.Second))
+	found := false
+	for _, m := range pm {
+		found = found || m == "MOTD: Server restarts at midnight"
+	}
+	if !found {
+		t.Fatalf("the next login should be sent the admin's MOTD privately, got %v", pm)
+	}
+	for _, m := range pm {
+		if strings.Contains(m, "Pwned") {
+			t.Fatalf("a non-admin key managed to set the MOTD: %v", pm)
+		}
 	}
 }

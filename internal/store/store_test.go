@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -175,5 +176,49 @@ func TestPruneMessagesDeletesOnlyOldOnes(t *testing.T) {
 	var idx int
 	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_messages_created'`).Scan(&idx); err != nil || idx != 1 {
 		t.Fatal("created_at index missing: pruning would scan the whole table")
+	}
+}
+
+// A database created before entry messages existed is upgraded in place, keeps
+// its data, and the new column then works.
+func TestOldDatabaseGainsTheEntryMessageColumn(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "old.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE channels (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+		topic TEXT NOT NULL DEFAULT '', creator_fp TEXT NOT NULL, locked INTEGER NOT NULL DEFAULT 0,
+		announce INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, is_main INTEGER NOT NULL DEFAULT 0);
+		INSERT INTO channels (name, topic, creator_fp, created_at, is_main) VALUES ('main', 'old topic', 'fp', 1, 1), ('lounge', '', 'fp', 2, 0);`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	st, err := Open(path) // migrates
+	if err != nil {
+		t.Fatalf("opening an old database: %v", err)
+	}
+	ch, ok, err := st.GetChannelByName(ctx, "lounge")
+	if err != nil || !ok || ch.EntryMessage != "" {
+		t.Fatalf("old channel unreadable after upgrade: %+v ok=%v err=%v", ch, ok, err)
+	}
+	if main, _, _ := st.GetChannelByName(ctx, "main"); main.Topic != "old topic" {
+		t.Fatal("existing data was lost in the upgrade")
+	}
+	if err := st.SetEntryMessage(ctx, ch.ID, "Welcome, friend"); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	again, err := Open(path) // a second open must not try to add the column again
+	if err != nil {
+		t.Fatalf("reopening: %v", err)
+	}
+	defer again.Close()
+	if ch2, _, _ := again.GetChannelByName(ctx, "lounge"); ch2.EntryMessage != "Welcome, friend" {
+		t.Fatalf("entry message not persisted: %q", ch2.EntryMessage)
 	}
 }

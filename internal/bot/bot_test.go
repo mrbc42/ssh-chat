@@ -12,6 +12,7 @@ import (
 type pmMsg struct{ to, text string }
 
 type fakeHost struct {
+	admins  map[string]bool     // fingerprints the server treats as administrators
 	sayIn   map[string][]string // lines spoken in channels other than #main
 	said    []string
 	actions []string
@@ -19,12 +20,13 @@ type fakeHost struct {
 	online  []Person
 }
 
-func (f *fakeHost) Say(t string)         { f.said = append(f.said, t) }
-func (f *fakeHost) SayIn(room, t string) { f.sayIn[room] = append(f.sayIn[room], t) }
-func (f *fakeHost) Action(t string)      { f.actions = append(f.actions, t) }
-func (f *fakeHost) PM(n, t string)       { f.pms = append(f.pms, pmMsg{n, t}) }
-func (f *fakeHost) Online() []Person     { return f.online }
-func (f *fakeHost) OnlineCount() int     { return len(f.online) }
+func (f *fakeHost) Say(t string)           { f.said = append(f.said, t) }
+func (f *fakeHost) SayIn(room, t string)   { f.sayIn[room] = append(f.sayIn[room], t) }
+func (f *fakeHost) Action(t string)        { f.actions = append(f.actions, t) }
+func (f *fakeHost) PM(n, t string)         { f.pms = append(f.pms, pmMsg{n, t}) }
+func (f *fakeHost) Online() []Person       { return f.online }
+func (f *fakeHost) OnlineCount() int       { return len(f.online) }
+func (f *fakeHost) IsAdmin(fp string) bool { return f.admins[fp] }
 func (f *fakeHost) reset() {
 	f.said, f.pms, f.actions = nil, nil, nil
 	f.sayIn = map[string][]string{}
@@ -40,17 +42,19 @@ func (f *fakeHost) left(p Person) {
 }
 
 type env struct {
-	t     *testing.T
-	b     *Bot
-	h     *fakeHost
-	clock time.Time
+	dbPath string
+	t      *testing.T
+	b      *Bot
+	h      *fakeHost
+	clock  time.Time
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	e := &env{t: t, h: &fakeHost{sayIn: map[string][]string{}}, clock: time.Date(2026, 10, 7, 14, 0, 0, 0, time.UTC)} // a Wednesday afternoon
+	e := &env{t: t, h: &fakeHost{sayIn: map[string][]string{}, admins: map[string]bool{}}, clock: time.Date(2026, 10, 7, 14, 0, 0, 0, time.UTC)} // a Wednesday afternoon
+	e.dbPath = filepath.Join(t.TempDir(), "bot.db")
 	b, err := New(e.h, Options{
-		DBPath:        filepath.Join(t.TempDir(), "bot.db"),
+		DBPath:        e.dbPath,
 		UnmatchedPath: filepath.Join(t.TempDir(), "unmatched.log"),
 		Now:           func() time.Time { return e.clock },
 		Sleep:         func(time.Duration) {},
@@ -335,10 +339,10 @@ func TestTellDeliveredAtNextLogin(t *testing.T) {
 	e.advance(26 * time.Hour)
 	e.h.reset()
 	e.login(bob)
-	if len(e.h.pms) != 1 || e.h.pms[0].to != "Bob" {
-		t.Fatalf("want one PM to Bob, got %v", e.h.pms)
+	if pms := e.h.pmsExceptMotd(); len(pms) != 1 || pms[0].to != "Bob" {
+		t.Fatalf("want one (non-MOTD) PM to Bob, got %v", e.h.pms)
 	}
-	body := e.h.pms[0].text
+	body := e.h.pmsExceptMotd()[0].text
 	if !strings.Contains(body, "board is on fire") || !strings.Contains(body, "Alice") || strings.ContainsRune(body, 0x1b) {
 		t.Fatalf("bad delivery (must be sanitised): %q", body)
 	}
@@ -346,7 +350,7 @@ func TestTellDeliveredAtNextLogin(t *testing.T) {
 	e.logoff(bob)
 	e.h.reset()
 	e.login(bob)
-	if len(e.h.pms) != 0 {
+	if len(e.h.pmsExceptMotd()) != 0 {
 		t.Fatalf("tell delivered twice: %v", e.h.pms)
 	}
 }
@@ -855,8 +859,8 @@ func TestKeylessAdviceIsPrivate(t *testing.T) {
 		}
 	}
 	// ...and the advice goes to the keyless user alone.
-	if len(e.h.pms) != 1 || e.h.pms[0].to != "Ghost" || !e.inPool("greet_anon", e.b.vars(ghost), e.h.pms[0].text) {
-		t.Fatalf("want one greet_anon PM to Ghost, got %v", e.h.pms)
+	if pms := e.h.pmsExceptMotd(); len(pms) != 1 || pms[0].to != "Ghost" || !e.inPool("greet_anon", e.b.vars(ghost), pms[0].text) {
+		t.Fatalf("want one greet_anon PM to Ghost (besides the MOTD), got %v", e.h.pms)
 	}
 
 	// Trivia: the "no score without a key" note is private; the answer is public.
@@ -1010,5 +1014,147 @@ func TestTriviaIsPerChannel(t *testing.T) {
 	e.b.Tick()
 	if len(e.h.sayIn["lounge"]) != 1 || len(e.h.said) != 0 || e.b.trivia["lounge"] != nil {
 		t.Fatalf("timeout reveal should be in #lounge: %v main=%v", e.h.sayIn, e.h.said)
+	}
+}
+
+// pmsExceptMotd is the private messages minus the login MOTD, for tests about
+// other kinds of private message.
+func (f *fakeHost) pmsExceptMotd() []pmMsg {
+	var out []pmMsg
+	for _, m := range f.pms {
+		if !strings.HasPrefix(m.text, "MOTD: ") {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func (e *env) motdPMs(nick string) []string {
+	var out []string
+	for _, m := range e.h.pms {
+		if m.to == nick && strings.HasPrefix(m.text, "MOTD: ") {
+			out = append(out, strings.TrimPrefix(m.text, "MOTD: "))
+		}
+	}
+	return out
+}
+
+func TestMotdShownPrivatelyAtEveryLogin(t *testing.T) {
+	e := newEnv(t)
+	// The data-file default is shown until an admin changes it - to keyed,
+	// keyless and everyone alike, and only to the person logging in.
+	for _, p := range []Person{keyed("a", "Alice"), anonP("g", "Ghost")} {
+		e.h.reset()
+		e.login(p)
+		if got := e.motdPMs(p.Nick); len(got) != 1 || got[0] != e.b.c.Motd {
+			t.Fatalf("%s should get the default MOTD privately: %v", p.Nick, e.h.pms)
+		}
+		for _, l := range e.h.said {
+			if strings.Contains(l, e.b.c.Motd) {
+				t.Fatal("the MOTD must not be broadcast to the room")
+			}
+		}
+	}
+	// Opted-out (untracked) users get it too.
+	e.b.st.forget("SHA256:o")
+	o := keyed("o", "Olly")
+	e.h.reset()
+	e.login(o)
+	if len(e.motdPMs("Olly")) != 1 {
+		t.Fatalf("an opted-out user should still get the MOTD: %v", e.h.pms)
+	}
+}
+
+func TestOnlyAdminsCanSetTheMotdAndItTakesEffectImmediately(t *testing.T) {
+	e := newEnv(t)
+	admin, user, ghost := keyed("boss", "Boss"), keyed("u", "User"), anonP("g", "Ghost")
+	e.h.admins["SHA256:boss"] = true
+	e.h.admins["anon-g"] = true // even if a keyless identity were somehow listed, it is refused
+	for _, p := range []Person{admin, user, ghost} {
+		e.login(p)
+		e.chat(p, "x") // spend the first-message reaction
+	}
+	say := func(p Person, text string) string {
+		e.advance(time.Minute)
+		e.h.reset()
+		e.chat(p, text)
+		return e.said()
+	}
+
+	// A non-admin cannot, however the command is phrased.
+	for _, who := range []Person{user, ghost} {
+		got := say(who, "!motd set Free beer for everyone")
+		if !e.inPool("motd_denied", e.b.vars(who), got) {
+			t.Fatalf("%s should be refused: %q", who.Nick, got)
+		}
+	}
+	if got := say(user, "@SysOp-Gus !MOTD   CLEAR"); !e.inPool("motd_denied", e.b.vars(user), got) {
+		t.Fatalf("clear by a non-admin: %q", got)
+	}
+	if e.b.currentMotd() != e.b.c.Motd {
+		t.Fatal("the MOTD changed although only non-admins tried")
+	}
+
+	// An admin can; it applies at once, to !motd and to the next login.
+	if got := say(admin, "!motd set Maintenance tonight at 9 \x1b[31mpm\x1b[0m"); !e.inPool("motd_set", e.b.vars(admin), got) {
+		t.Fatalf("admin set: %q", got)
+	}
+	if got := e.b.currentMotd(); got != "Maintenance tonight at 9 [31mpm [0m" && strings.ContainsRune(got, 0x1b) {
+		t.Fatalf("control characters must be stripped from the stored MOTD: %q", got)
+	}
+	if got := say(user, "!motd"); !strings.Contains(got, "Maintenance tonight at 9") {
+		t.Fatalf("!motd should show the new text: %q", got)
+	}
+	e.logoff(user)
+	e.h.reset()
+	e.login(user)
+	if got := e.motdPMs("User"); len(got) != 1 || !strings.Contains(got[0], "Maintenance tonight at 9") {
+		t.Fatalf("the next login should get the new MOTD: %v", e.h.pms)
+	}
+
+	// Usage, length cap, and clearing.
+	if got := say(admin, "!motd set"); !e.inPool("motd_usage", e.b.vars(admin), got) {
+		t.Fatalf("empty set: %q", got)
+	}
+	say(admin, "!motd set "+strings.Repeat("x", 1000))
+	if n := len(e.b.currentMotd()); n != maxMotdChars {
+		t.Fatalf("MOTD should be capped at %d chars, got %d", maxMotdChars, n)
+	}
+	if got := say(admin, "!motd clear"); !e.inPool("motd_cleared", e.b.vars(admin), got) {
+		t.Fatalf("clear: %q", got)
+	}
+	if got := say(user, "!motd"); !e.inPool("motd_none", e.b.vars(user), got) {
+		t.Fatalf("!motd after clear: %q", got)
+	}
+	e.logoff(user)
+	e.h.reset()
+	e.login(user)
+	if len(e.motdPMs("User")) != 0 {
+		t.Fatalf("a cleared MOTD must not be sent at login: %v", e.h.pms)
+	}
+}
+
+func TestMotdSurvivesARestart(t *testing.T) {
+	e := newEnv(t)
+	e.h.admins["SHA256:boss"] = true
+	boss := keyed("boss", "Boss")
+	e.login(boss)
+	e.chat(boss, "x")
+	e.advance(time.Minute)
+	e.chat(boss, "!motd set Kept across restarts")
+	_ = e.b.st.close()
+
+	b2, err := New(e.h, Options{DBPath: e.dbPath, Now: func() time.Time { return e.clock }, Sleep: func(time.Duration) {}, Seed: [2]uint64{1, 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b2.st.close()
+	if got := b2.currentMotd(); got != "Kept across restarts" {
+		t.Fatalf("MOTD lost on restart: %q", got)
+	}
+	// ...including a deliberately cleared one (no fallback to the default).
+	b2.st.set("motd", "")
+	if got := b2.currentMotd(); got != "" {
+		t.Fatalf("a cleared MOTD must stay cleared, got %q", got)
 	}
 }

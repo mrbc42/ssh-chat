@@ -431,3 +431,133 @@ func TestAdminsModeratePermanentChannelsOnly(t *testing.T) {
 		t.Fatalf("admin rights must not extend to ordinary channels: %q", got)
 	}
 }
+
+// infoLinesAfterJoin joins sess to room and returns the private info lines it
+// receives (history replay and notices are not info lines).
+func infoLinesAfterJoin(t *testing.T, r *Room, s *Session) []string {
+	t.Helper()
+	drain(s)
+	r.Join(s)
+	time.Sleep(300 * time.Millisecond)
+	var out []string
+	for {
+		select {
+		case o := <-s.Outbox:
+			if o.Line != nil && o.Line.Kind == KindInfo {
+				out = append(out, o.Line.Body)
+			}
+		default:
+			return out
+		}
+	}
+}
+
+func TestChannelEntryMessage(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	owner := NewSession("SHA256:owner", "1.1.1.1", "owner")
+	plain := NewSession("SHA256:plain", "2.2.2.2", "plain")
+	h.Main().Join(owner)
+	h.Main().Join(plain)
+	time.Sleep(100 * time.Millisecond)
+
+	_ = info(t, h, owner, "/create lounge")
+	time.Sleep(200 * time.Millisecond)
+	lounge, _ := h.GetLoadedRoom("lounge")
+
+	// Nothing set yet: joiners see no welcome, and the owner is told how.
+	if got := info(t, h, owner, "/welcome"); !strings.Contains(got, "No entry message") {
+		t.Fatalf("/welcome with none set: %q", got)
+	}
+	if lines := infoLinesAfterJoin(t, lounge, plain); len(lines) != 0 {
+		t.Fatalf("no entry message expected: %v", lines)
+	}
+
+	// Only owners and operators can set it.
+	if got := info(t, h, plain, "/welcome hijacked"); !strings.Contains(got, "must be an operator") {
+		t.Fatalf("a plain member must not set it: %q", got)
+	}
+
+	// The owner sets it (with junk to sanitise); the channel is told who did.
+	_ = info(t, h, owner, "/welcome Be nice \x1b[31mand\x1b[0m   have fun")
+	time.Sleep(200 * time.Millisecond)
+	if got := lounge.Info().Entry; got != "Be nice [31mand [0m have fun" && strings.ContainsRune(got, 0x1b) {
+		t.Fatalf("control characters must be stripped: %q", got)
+	}
+	joiner := NewSession("SHA256:joiner", "3.3.3.3", "joiner")
+	h.Main().Join(joiner)
+	time.Sleep(100 * time.Millisecond)
+	lines := infoLinesAfterJoin(t, lounge, joiner)
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "Welcome to #lounge: Be nice") {
+		t.Fatalf("a joiner should be shown the entry message once, privately: %v", lines)
+	}
+	// Only the joiner sees it: someone already in the channel is not re-shown it.
+	drain(owner)
+	time.Sleep(100 * time.Millisecond)
+	if got := info(t, h, plain, "/welcome"); !strings.Contains(got, "must be an operator") {
+		t.Fatalf("plain: %q", got)
+	}
+	if got := info(t, h, owner, "/welcome"); !strings.Contains(got, "Entry message for #lounge: Be nice") {
+		t.Fatalf("/welcome should show the current message: %q", got)
+	}
+
+	// Length cap.
+	_ = info(t, h, owner, "/welcome "+strings.Repeat("x", 900))
+	time.Sleep(200 * time.Millisecond)
+	if n := len(lounge.Info().Entry); n != maxEntryMessage {
+		t.Fatalf("entry message should be capped at %d, got %d", maxEntryMessage, n)
+	}
+
+	// It survives a restart: a fresh hub over the same database shows it.
+	_ = info(t, h, owner, "/welcome Back after the restart")
+	time.Sleep(300 * time.Millisecond)
+	st.Flush()
+	h2, err := NewHub(st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, ok, _ := st.GetChannelByName(ctx, "lounge")
+	if !ok || ch.EntryMessage != "Back after the restart" {
+		t.Fatalf("not persisted: %+v", ch)
+	}
+	late := NewSession("SHA256:late", "4.4.4.4", "late")
+	lines = infoLinesAfterJoin(t, h2.GetOrLoadRoom(ctx, ch), late)
+	if len(lines) != 1 || !strings.Contains(lines[0], "Back after the restart") {
+		t.Fatalf("after a restart: %v", lines)
+	}
+
+	// Clearing it.
+	_ = info(t, h, owner, "/welcome clear")
+	time.Sleep(200 * time.Millisecond)
+	again := NewSession("SHA256:again", "5.5.5.5", "again")
+	if lines := infoLinesAfterJoin(t, lounge, again); len(lines) != 0 {
+		t.Fatalf("a cleared entry message must not be shown: %v", lines)
+	}
+
+	// /help: operators of a channel see /welcome there; nobody sees it in #main.
+	if got := helpText(t, h, owner); !strings.Contains(got, "/welcome") {
+		t.Fatalf("the channel owner's /help should list /welcome:\n%s", got)
+	}
+	if got := helpText(t, h, plain); strings.Contains(got, "/welcome") {
+		t.Fatalf("a plain member's /help must not list /welcome:\n%s", got)
+	}
+}
+
+// Admins can set the entry message of a permanent channel (it has no owner).
+func TestAdminCanSetEntryMessageOfPermanentChannel(t *testing.T) {
+	h, _ := adminHub(t)
+	ctx := context.Background()
+	if err := h.EnsurePermanent(ctx, []string{"help"}); err != nil {
+		t.Fatal(err)
+	}
+	admin := NewSession("SHA256:admin", "9.9.9.9", "boss")
+	h.Main().Join(admin)
+	_ = info(t, h, admin, "/join help")
+	time.Sleep(200 * time.Millisecond)
+	_ = info(t, h, admin, "/welcome Ask your questions here")
+	time.Sleep(200 * time.Millisecond)
+	room, _ := h.GetLoadedRoom("help")
+	if got := room.Info().Entry; got != "Ask your questions here" {
+		t.Fatalf("admin could not set the permanent channel's entry message: %q", got)
+	}
+}
