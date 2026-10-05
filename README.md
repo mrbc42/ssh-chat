@@ -53,3 +53,10 @@ Needs Go 1.24.
 go build ./cmd/server
 go test ./...
 ```
+
+## About
+
+The design, features, testing and troubleshooting are the author's own work; the
+code was written with Claude AI. It has an automated test suite, has been
+load-tested with 1000 simultaneous users, and has had an AI-assisted security
+review, but it has not been independently audited. Bug reports are welcome.
