@@ -6,3 +6,6 @@
 
 # Never commit the SSH host private key, backed up or not.
 /deploy/hostkey-backup/
+
+# Private maintainer notes (local network details); never commit.
+STATUS.md

@@ -53,6 +53,3 @@ Needs Go 1.24.
 go build ./cmd/server
 go test ./...
 ```
-
-[`STATUS.md`](STATUS.md) covers the design, every command and setting, the limits
-and the load-test results.
