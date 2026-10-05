@@ -1055,3 +1055,53 @@ func TestInviteOfflineKnownUserAndPermanentChannel(t *testing.T) {
 		t.Fatal("a user invited while offline should get in when she next connects")
 	}
 }
+
+// An operator must not be able to lock the owner out of their own channel by
+// banning them while they are away (the in-channel case was already refused).
+func TestOperatorCannotBanTheOwnerWhileTheyAreAway(t *testing.T) {
+	h, st := adminHub(t)
+	ctx := context.Background()
+	owner := NewSession("SHA256:owner", "1.1.1.1", "alice")
+	op := NewSession("SHA256:op", "2.2.2.2", "bob")
+	plain := NewSession("SHA256:plain", "3.3.3.3", "carol")
+	for _, s := range []*Session{owner, op, plain} {
+		h.Main().Join(s)
+	}
+	_ = st.SetNickname(ctx, "SHA256:owner", "alice")
+	_ = st.SetNickname(ctx, "SHA256:plain", "carol")
+	time.Sleep(150 * time.Millisecond)
+	_ = info(t, h, owner, "/create club")
+	time.Sleep(200 * time.Millisecond)
+	_ = info(t, h, op, "/join club")
+	time.Sleep(200 * time.Millisecond)
+	_ = info(t, h, owner, "/op bob")
+	_ = info(t, h, owner, "/leave") // the owner steps out
+	time.Sleep(300 * time.Millisecond)
+	ch, _, _ := st.GetChannelByName(ctx, "club")
+
+	if got := info(t, h, op, "/ban alice"); !strings.Contains(got, "cannot ban the channel owner") {
+		t.Fatalf("an operator banning the absent owner must be refused: %q", got)
+	}
+	if banned, _ := st.IsBanned(ctx, ch.ID, "SHA256:owner", ""); banned {
+		t.Fatal("the owner was banned from their own channel")
+	}
+	// Operators can still ban ordinary absent users.
+	_ = info(t, h, op, "/ban carol")
+	time.Sleep(200 * time.Millisecond)
+	if banned, _ := st.IsBanned(ctx, ch.ID, "SHA256:plain", ""); !banned {
+		t.Fatal("an operator should still be able to ban an ordinary absent user")
+	}
+
+	// Defence in depth: even if a ban row matching the owner exists (say by a
+	// shared IP address), the owner can still enter their channel.
+	_ = st.AddBan(ctx, ch.ID, "", "1.1.1.1", "bob", "shared address")
+	_ = info(t, h, owner, "/join club")
+	time.Sleep(300 * time.Millisecond)
+	if r := owner.CurrentRoom(); r == nil || r.Name() != "club" {
+		t.Fatal("the owner must always be able to enter their own channel")
+	}
+	// ...and the banned ordinary user still cannot.
+	if got := info(t, h, plain, "/join club"); !strings.Contains(got, "banned") {
+		t.Fatalf("a banned user must stay out: %q", got)
+	}
+}

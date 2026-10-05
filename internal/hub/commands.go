@@ -551,6 +551,12 @@ func joinByName(c *CmdCtx, name string, justCreated bool) []string {
 		if err != nil {
 			return []string{"Internal error checking ban list."}
 		}
+		// A channel's owner can never be locked out of it by a ban (defence in
+		// depth: a ban can also match by IP address, e.g. one shared with a
+		// banned user).
+		if role, _, _ := c.Store.IsOwnerOrOp(c.ctx, ch.ID, c.Sess.FP); role == store.RoleOwner {
+			banned = false
+		}
 		if banned {
 			return []string{fmt.Sprintf("You are banned from #%s.", ch.Name)}
 		}
@@ -682,6 +688,13 @@ func cmdBan(c *CmdCtx, args []string) []string {
 		fp, ok, err = c.Store.FindFingerprintByNickname(c.ctx, nick)
 		if err != nil || !ok {
 			return []string{fmt.Sprintf("No such user %q.", nick)}
+		}
+		// The owner is protected whether or not they are in the channel right
+		// now: without this an operator could wait for the owner to leave and
+		// then ban them from their own channel.
+		targetRole, _, _ := c.Store.IsOwnerOrOp(c.ctx, room.ID, fp)
+		if targetRole == store.RoleOwner && ownerRole != store.RoleOwner {
+			return []string{"Operators cannot ban the channel owner."}
 		}
 	}
 
